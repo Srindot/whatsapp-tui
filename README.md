@@ -12,11 +12,13 @@ compiler** (for SQLite).
 ```bash
 git clone https://github.com/Srindot/whatsapp-tui
 cd whatsapp-tui
-go build -o whatsapp-tui .
-./whatsapp-tui          # scan the QR code: WhatsApp → Settings → Linked devices
+make install            # builds and copies it to ~/.local/bin
+whatsapp-tui            # scan the QR code: WhatsApp → Settings → Linked devices
 ```
 
-Or `go install github.com/Srindot/whatsapp-tui@latest` (puts it in `~/go/bin`).
+`~/.local/bin` needs to be on your `PATH` (`make install` tells you if it
+isn't). For all users: `sudo make install PREFIX=/usr/local`. Or
+`go install github.com/Srindot/whatsapp-tui@latest` (into `~/go/bin`).
 
 ### Dependencies
 
@@ -56,7 +58,7 @@ characters outside kitty). Native Windows is untested.
 
 ## Use
 
-Press `?` in the app for every key. The basics: `j`/`k` move, `enter` opens a
+The full guide is in [USAGE.md](USAGE.md); press `?` in the app for every key. The basics: `j`/`k` move, `enter` opens a
 chat, `i` writes, `esc` goes back to normal mode, `v` selects messages
 (`r` reply, `e` react, `f` forward, `y` copy, `d` download), `/` searches,
 `S` searches all chats, `:q` quits.
