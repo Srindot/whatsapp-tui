@@ -334,3 +334,7 @@ func Blocks(img image.Image, cols, rows int) string {
 	}
 	return b.String()
 }
+
+// Diacritics returns the row/column diacritics (for tests decoding
+// placeholders).
+func Diacritics() []rune { return append([]rune(nil), diacritics[:]...) }

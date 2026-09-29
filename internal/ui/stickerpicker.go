@@ -238,7 +238,8 @@ func (m Model) renderStickers(width, height int) string {
 			}
 			cells = append(cells, m.stickerCell(items[i], cols, cellRows, i == p.cursor[p.tab]), strings.Repeat(" ", gridGap))
 		}
-		b.WriteString("\n\n " + lipgloss.JoinHorizontal(lipgloss.Top, cells...))
+		// pad the whole row (not just its first line) so cells stay aligned
+		b.WriteString("\n\n" + lipgloss.NewStyle().PaddingLeft(1).Render(lipgloss.JoinHorizontal(lipgloss.Top, cells...)))
 	}
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String())
 }
