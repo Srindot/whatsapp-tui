@@ -78,9 +78,10 @@ Press `v`: the newest message is selected. Move with `j` `k` (`gg` `G`), then:
 
 | Key | |
 |---|---|
-| `r` / `enter` | reply |
+| `enter` | reply |
 | `p` | reply privately to a group member |
-| `e` | react: `1`–`6` quick emoji, `x` removes, or type any emoji + `enter` |
+| `r` | react: `1`–`6` quick emoji, `x` removes, or type any emoji + `enter` |
+| `e` | edit your message: it opens in the input box; `enter` saves, `esc` cancels (text messages, first 15 minutes) |
 | `f` | forward: type to filter chats, `space` picks several, `enter` sends |
 | `y` | copy the text and/or image |
 | `s` | save (download) to your download folder |
@@ -90,7 +91,10 @@ Press `v`: the newest message is selected. Move with `j` `k` (`gg` `G`), then:
 | `R` | retry a message that failed to send |
 | `esc` | done |
 
-`ctrl+x` cancels a reply (or drops an attachment) in any mode.
+`ctrl+x` cancels a reply or an edit (or drops an attachment) in any mode.
+
+Edited messages show "edited" next to their time, whether you edited them here,
+on your phone, or someone else did.
 
 ## Searching
 

@@ -175,7 +175,7 @@ func TestGlobalSearchOpenHitInChat(t *testing.T) {
 		t.Fatalf("N -> %s", m.msgs[m.sel].Id)
 	}
 	// and actions work on it
-	m, _ = keys(t, m, "r")
+	m, _ = keys(t, m, "enter")
 	if m.replyTo == nil || m.replyTo.Id != "a@s.whatsapp.net-40" {
 		t.Fatal("reply target wrong")
 	}

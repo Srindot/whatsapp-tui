@@ -91,6 +91,8 @@ type Model struct {
 	sel     int               // selected message (visual mode), index into msgs
 	picker  bool              // reaction picker open
 	replyTo *messages.Message // message being replied to
+	editing *messages.Message // your message being edited (e in visual mode)
+	draft   string            // what was typed before the edit started
 	info    *infoState        // chat info panel, nil when closed
 
 	search   *chatSearch // active in-chat search, nil when none
@@ -450,6 +452,7 @@ func (m *Model) openChat(c *messages.Conversation) tea.Cmd {
 		m.msgs = nil
 		m.compose.SetValue("")
 		m.replyTo = nil
+		m.editing = nil
 		m.attachments = nil
 		m.mention, m.chosen = nil, nil
 		m.search = nil
@@ -859,11 +862,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// ctrl+x drops the pasted image, else cancels the reply, in any mode
 	// that shows them (not while typing a command or search).
-	if key == "ctrl+x" && (len(m.attachments) > 0 || m.replyTo != nil) &&
+	if key == "ctrl+x" && (len(m.attachments) > 0 || m.replyTo != nil || m.editing != nil) &&
 		(m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) && !m.picker {
-		if len(m.attachments) > 0 {
+		switch {
+		case m.editing != nil:
+			m.cancelEdit()
+		case len(m.attachments) > 0:
 			m.dropAttachment()
-		} else {
+		default:
 			m.cancelReply()
 		}
 		return m, nil
@@ -1076,13 +1082,18 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		if m.editing != nil {
+			m.cancelEdit() // don't leave a half-edit that enter would save later
+		}
 		m.mode = modeNormal
 		m.compose.Blur()
 		return m, nil
 	case "ctrl+v":
 		return m, m.paste()
 	case "ctrl+x":
-		if len(m.attachments) > 0 {
+		if m.editing != nil {
+			m.cancelEdit()
+		} else if len(m.attachments) > 0 {
 			m.dropAttachment()
 		} else if m.replyTo != nil {
 			m.cancelReply()
@@ -1094,6 +1105,9 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		text := strings.TrimSpace(m.compose.Value())
 		if m.current == nil {
 			return m, nil
+		}
+		if m.editing != nil {
+			return m.saveEdit(text)
 		}
 		if m.replyTo != nil && len(m.attachments) == 0 {
 			if text == "" {

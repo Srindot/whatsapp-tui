@@ -141,6 +141,7 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 		data.GetSyncType(), len(conversations)))
 
 	var toUpsert []Conversation
+	var edits [][2]string // message id, new text
 	totalMessages := 0
 	addMsgErrors := 0
 	syncedChats := make(map[string]bool)
@@ -214,6 +215,12 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 					who = evt.Info.Sender.ToNonAD().String()
 				}
 				_ = sm.db.SetReaction(r.GetKey().GetID(), who, r.GetText(), r.GetSenderTimestampMS())
+				continue
+			}
+
+			if id, text, ok := editOf(evt.Message); ok {
+				// applied once the batch is stored: an edit can come first
+				edits = append(edits, [2]string{id, text})
 				continue
 			}
 
@@ -350,6 +357,10 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 			toUpsert = append(toUpsert, *newConv)
 		}
 		sm.mu.Unlock()
+	}
+
+	for _, e := range edits {
+		_, _ = sm.db.EditMessage(e[0], e[1])
 	}
 
 	// Persist all conversation updates (outside lock)

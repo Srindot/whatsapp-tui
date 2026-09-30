@@ -71,6 +71,8 @@ type Message struct {
 
 	Status int // delivery state of your own messages (Status* constants)
 
+	Edited bool // changed after sending ("edited" next to the time)
+
 	Mentions map[string]string // "@<number>" in Text -> display name; filled when loading
 }
 

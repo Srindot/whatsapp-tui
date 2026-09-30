@@ -224,7 +224,7 @@ func (m Model) statusLineWith(badge string) string {
 }
 
 // visualHint lists the visual-mode actions.
-const visualHint = "r reply · p private · e react · f forward · space view · y copy · s save · d delete · o open · esc"
+const visualHint = "enter reply · p private · r react · e edit · f forward · space view · y copy · s save · d delete · o open · esc"
 
 func (m Model) renderCommandLine() string {
 	switch {

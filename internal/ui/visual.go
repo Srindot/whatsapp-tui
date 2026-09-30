@@ -31,6 +31,7 @@ type Actions interface {
 	DirectChat(ctx context.Context, sender string) string
 	ChatName(ctx context.Context, jid string) string
 	ResendMessage(ctx context.Context, msgID string) error
+	EditMessage(ctx context.Context, m messages.Message, text string, mentions []string) error
 }
 
 // quickReactions are offered by number in the reaction picker.
@@ -170,18 +171,20 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(len(m.msgs))
 	case "g":
 		m.pendingG = true
-	case "r", "enter":
+	case "enter":
 		return m.startReply(sel)
 	case "p":
 		if m.current == nil || !isGroup(m.current.JID) || sel.FromMe {
 			return m.startReply(sel) // in a one-to-one chat it's the same
 		}
 		return m, m.openPrivate(sel)
-	case "e":
+	case "r":
 		m.picker = true
 		m.cmdline.Prompt = "react: "
 		m.cmdline.SetValue("")
 		return m, m.cmdline.Focus()
+	case "e":
+		return m.startEdit(sel)
 	case "f":
 		return m, m.openForward(sel)
 	case "y":
@@ -255,7 +258,7 @@ func (m Model) openPrivateChat(msg privateChatMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) replyRows() int {
-	if m.replyTo == nil {
+	if m.replyTo == nil && m.editing == nil {
 		return 0
 	}
 	return 2
@@ -263,6 +266,22 @@ func (m Model) replyRows() int {
 
 // renderReplyBar shows what the message being written replies to.
 func (m Model) renderReplyBar(width int) string {
+	if m.editing != nil {
+		// the edit bar: what the message says now
+		text := strings.ReplaceAll(prettyTags(m.editing.Text), "\n", " ")
+		bar := lipgloss.NewStyle().Foreground(colorWarm).Render("▎")
+		left := time.Until(time.Unix(int64(m.editing.Timestamp), 0).Add(messages.EditWindow)).Round(time.Minute)
+		title := "✎ Editing your message"
+		if left > 0 {
+			title += fmt.Sprintf(" (%d min left)", int(left.Minutes()))
+		}
+		lines := []string{
+			bar + lipgloss.NewStyle().Foreground(colorWarm).Bold(true).Render(ansi.Truncate(title, width-34, "…")) +
+				styleMuted.Render("   enter save · esc cancel"),
+			bar + styleDim.Render(ansi.Truncate(text, width-3, "…")),
+		}
+		return lipgloss.NewStyle().Width(width).MaxWidth(width).PaddingLeft(1).Render(strings.Join(lines, "\n"))
+	}
 	q := *m.replyTo
 	who := m.senderName(q)
 	title := "↩ Replying to " + who
@@ -276,6 +295,76 @@ func (m Model) renderReplyBar(width int) string {
 		bar + styleDim.Render(ansi.Truncate(text, width-3, "…")),
 	}
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).PaddingLeft(1).Render(strings.Join(lines, "\n"))
+}
+
+// ---------- edit ----------
+
+// startEdit puts one of your messages in the input box to change it.
+func (m Model) startEdit(sel messages.Message) (tea.Model, tea.Cmd) {
+	if ok, why := messages.CanEdit(sel); !ok {
+		m.notice, m.noticeErr = why, true
+		return m, nil
+	}
+	if m.actions == nil {
+		m.notice, m.noticeErr = "editing isn't available", true
+		return m, nil
+	}
+	if m.editing == nil {
+		m.draft = m.compose.Value()
+	}
+	m.editing = &sel
+	m.replyTo = nil
+	m.attachments = nil
+	// mentions show as @Name, as when writing (they're sent as @number)
+	text, chosen := sel.Text, []chosenMention(nil)
+	for user, name := range sel.Mentions {
+		if strings.Contains(text, "@"+user) {
+			text = strings.ReplaceAll(text, "@"+user, "@"+name)
+			chosen = append(chosen, chosenMention{name: name, jid: user})
+		}
+	}
+	m.chosen, m.mention = chosen, nil
+	m.compose.SetValue(text)
+	m.compose.CursorEnd()
+	m.mode = modeInsert
+	m.picker = false
+	m.fitCompose()
+	m.refreshMessages(false)
+	m.resize()
+	return m, m.compose.Focus()
+}
+
+// cancelEdit drops the edit and puts back what you were typing before.
+func (m *Model) cancelEdit() {
+	m.editing = nil
+	m.chosen, m.mention = nil, nil
+	m.compose.SetValue(m.draft)
+	m.draft = ""
+	m.fitCompose()
+	m.resize()
+}
+
+// saveEdit sends the edited text.
+func (m Model) saveEdit(text string) (tea.Model, tea.Cmd) {
+	target := *m.editing
+	if text == "" {
+		m.notice, m.noticeErr = "a message can't be edited to nothing; use d in visual mode to delete it", true
+		return m, nil
+	}
+	text, jids := mentionsForSend(text, m.chosen)
+	m.editing = nil
+	m.chosen, m.mention = nil, nil
+	m.compose.SetValue(m.draft)
+	m.draft = ""
+	m.fitCompose()
+	m.resize()
+	if text == target.Text {
+		return m, nil // unchanged
+	}
+	a := m.actions
+	return m, m.action("Edited", func(ctx context.Context) (string, error) {
+		return "", a.EditMessage(ctx, target, text, jids)
+	})
 }
 
 func (m *Model) cancelReply() {

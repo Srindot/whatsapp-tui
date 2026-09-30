@@ -306,6 +306,10 @@ func (eh *eventHandler) handleMessage(evt *events.Message) {
 		eh.sm.handleRevoke(evt.Info.Chat.String(), pm, evt.Info.IsFromMe)
 		return
 	}
+	if id, text, ok := editOf(evt.Message); ok {
+		eh.sm.handleEdit(evt.Info.Chat.String(), id, text)
+		return
+	}
 	text, preview := extractMessageContent(evt.Message)
 	eh.processIncomingMessage(evt, text, preview)
 }

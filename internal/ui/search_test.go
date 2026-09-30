@@ -133,7 +133,7 @@ func TestChatSearchEnterLoadsHistoryAndNavigates(t *testing.T) {
 		t.Fatalf("N -> %s, want m3", ids())
 	}
 	// the match is selected, so visual actions apply to it
-	m, _ = keys(t, m, "r")
+	m, _ = keys(t, m, "enter")
 	if m.replyTo == nil || m.replyTo.Id != "m3" {
 		t.Fatal("reply after search should target the match")
 	}

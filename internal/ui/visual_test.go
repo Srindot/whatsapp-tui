@@ -26,6 +26,7 @@ type fakeActions struct {
 	saved     []string // "msgID|dir"
 	mediaPath string
 	resent    []string
+	edits     []string // "msgID|text|mentions"
 	info      messages.ChatInfo
 }
 
@@ -121,7 +122,7 @@ func TestVisualSelectAndMove(t *testing.T) {
 func TestVisualReply(t *testing.T) {
 	a := &fakeActions{}
 	m := visualModel(t, a, fakeClip{})
-	m, _ = keys(t, m, "v", "k", "r")
+	m, _ = keys(t, m, "v", "k", "enter")
 	if m.mode != modeInsert || m.replyTo == nil || m.replyTo.Id != "m2" {
 		t.Fatalf("mode=%d replyTo=%v", m.mode, m.replyTo)
 	}
@@ -139,7 +140,7 @@ func TestVisualReply(t *testing.T) {
 	}
 
 	// ctrl+x cancels a reply
-	m, _ = keys(t, m, "esc", "v", "r")
+	m, _ = keys(t, m, "esc", "v", "enter")
 	m, _ = press(t, m, tea.KeyCtrlX)
 	if m.replyTo != nil {
 		t.Fatal("ctrl+x did not cancel the reply")
@@ -171,15 +172,15 @@ func TestVisualPrivateReply(t *testing.T) {
 func TestVisualReact(t *testing.T) {
 	a := &fakeActions{}
 	m := visualModel(t, a, fakeClip{})
-	m, _ = keys(t, m, "v", "e")
+	m, _ = keys(t, m, "v", "r")
 	if !m.picker || !strings.Contains(stripANSI(m.View()), "remove") {
 		t.Fatal("reaction picker not shown")
 	}
 	m, cmds := keys(t, m, "2")
 	m = drain(t, m, tea.Batch(cmds...))
-	m, cmds = keys(t, m, "e", "x")
+	m, cmds = keys(t, m, "r", "x")
 	m = drain(t, m, tea.Batch(cmds...))
-	m, _ = keys(t, m, "e", "🔥")
+	m, _ = keys(t, m, "r", "🔥")
 	m, cmd := press(t, m, tea.KeyEnter)
 	drain(t, m, cmd)
 	want := []string{"m3|❤️", "m3|", "m3|🔥"}
@@ -359,7 +360,7 @@ func TestCtrlXCancelsReplyInAnyMode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := visualModel(t, &fakeActions{}, fakeClip{})
-			m, _ = keys(t, m, "v", "k", "r")
+			m, _ = keys(t, m, "v", "k", "enter")
 			m, _ = keys(t, m, tc.keys...)
 			if m.replyTo == nil || m.mode != tc.mode {
 				t.Fatalf("setup: replyTo=%v mode=%d", m.replyTo != nil, m.mode)
@@ -457,4 +458,11 @@ func TestLinksInChatAndOpenWithO(t *testing.T) {
 	if len(opened) != 1 || opened[0] != url || m.notice != "Opened the first of 2 links" {
 		t.Fatalf("opened %v, notice %q", opened, m.notice)
 	}
+}
+
+func (a *fakeActions) EditMessage(_ context.Context, m messages.Message, text string, mentions []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.edits = append(a.edits, m.Id+"|"+text+"|"+strings.Join(mentions, ","))
+	return nil
 }

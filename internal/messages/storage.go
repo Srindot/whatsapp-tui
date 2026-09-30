@@ -76,6 +76,7 @@ func (md *MessageDatabase) InitWithDB(db *sql.DB) error {
 	md.db.Exec(`ALTER TABLE messages ADD COLUMN quoted_sender TEXT DEFAULT ''`)
 	md.db.Exec(`ALTER TABLE messages ADD COLUMN quoted_text TEXT DEFAULT ''`)
 	md.db.Exec(`ALTER TABLE messages ADD COLUMN status INTEGER DEFAULT 0`)
+	md.db.Exec(`ALTER TABLE messages ADD COLUMN edited BOOLEAN DEFAULT 0`)
 
 	// One reaction per person per message; an empty emoji removes it.
 	if _, err := md.db.Exec(`
@@ -95,7 +96,7 @@ func (md *MessageDatabase) InitWithDB(db *sql.DB) error {
 // msgColumns is the column list scanned by collectMessages.
 const msgColumns = "id, chat_id, contact_id, contact_name, contact_short, timestamp, from_me, forwarded, text, " +
 	"COALESCE(media_type, ''), media, COALESCE(quoted_id, ''), COALESCE(quoted_sender, ''), COALESCE(quoted_text, ''), " +
-	"COALESCE(status, 0)"
+	"COALESCE(status, 0), COALESCE(edited, 0)"
 
 // escapeLike escapes the SQL LIKE metacharacters (%, _, \) so they are
 // treated as literal characters in a LIKE ? ESCAPE '\' clause.
@@ -257,7 +258,7 @@ func collectMessages(rows *sql.Rows) ([]Message, error) {
 		var ts int64
 		if err := rows.Scan(&msg.Id, &msg.ChatId, &msg.ContactId, &msg.ContactName, &msg.ContactShort, &ts,
 			&msg.FromMe, &msg.Forwarded, &msg.Text, &msg.MediaType, &msg.Media,
-			&msg.QuotedID, &msg.QuotedSender, &msg.QuotedText, &msg.Status); err != nil {
+			&msg.QuotedID, &msg.QuotedSender, &msg.QuotedText, &msg.Status, &msg.Edited); err != nil {
 			return msgs, fmt.Errorf("failed to scan message row: %w", err)
 		}
 		msg.Timestamp = uint64(ts)
@@ -504,6 +505,21 @@ func (md *MessageDatabase) DeleteMessage(id string) error {
 	}
 	_, err := md.db.Exec(`DELETE FROM reactions WHERE msg_id = ?`, id)
 	return err
+}
+
+// EditMessage replaces a message's text after it was edited, and marks it
+// edited. Deleted messages stay deleted.
+func (md *MessageDatabase) EditMessage(id, text string) (bool, error) {
+	if md.db == nil {
+		return false, fmt.Errorf("database not initialized")
+	}
+	res, err := md.db.Exec(`UPDATE messages SET text = ?, edited = 1 WHERE id = ? AND text NOT IN (?, ?)`,
+		text, id, noteDeleted, noteYouDeleted)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // MarkRevoked replaces a message deleted for everyone with a note.

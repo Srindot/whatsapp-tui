@@ -127,7 +127,7 @@ func (m Model) renderChatPane(width, height int) string {
 	}
 	parts := []string{m.renderHeader(title, width, m.focus == paneMessages)}
 	parts = append(parts, lipgloss.NewStyle().Width(width).Height(m.vp.Height).Render(m.vp.View()))
-	if m.replyTo != nil {
+	if m.replyTo != nil || m.editing != nil {
 		parts = append(parts, m.renderReplyBar(width))
 	}
 	if len(m.attachments) > 0 {
@@ -355,6 +355,9 @@ func (m Model) renderBubble(msg messages.Message, showSender, selected bool, max
 	}
 
 	stamp := stampStyle.Render(t.Format("15:04"))
+	if msg.Edited {
+		stamp = stampStyle.Render("edited ") + stamp
+	}
 	if msg.FromMe {
 		if mark := statusMark(msg.Status); mark != "" {
 			stamp += " " + mark
