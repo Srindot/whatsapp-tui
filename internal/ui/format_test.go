@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -125,5 +127,69 @@ func TestMentionsShownByName(t *testing.T) {
 	sp := withMentions(parseInline("@918331840042"), names)
 	if sp[0].style&fmtMentionYou == 0 {
 		t.Fatal("a mention of you should be highlighted as such")
+	}
+}
+
+var osc8 = regexp.MustCompile("\x1b\\]8;;([^\x1b]*)\x1b\\\\")
+
+func TestWrappedLinksCarryTheFullURL(t *testing.T) {
+	url := "https://www.linkedin.com/jobs/view/4470560160/?refId=abcdefghijkl&trackingId=xyz"
+	lines := formatText("apply here: "+url+" soon", 30, lipgloss.NewStyle(), nil)
+	if len(lines) < 3 {
+		t.Fatalf("expected the link to wrap, got %d lines", len(lines))
+	}
+	linked := 0
+	for i, l := range lines {
+		if w := ansi.StringWidth(l); w > 30 {
+			t.Fatalf("line %d is %d wide (hyperlink codes counted?)", i, w)
+		}
+		for _, m := range osc8.FindAllStringSubmatch(l, -1) {
+			if m[1] != "" && m[1] != url {
+				t.Fatalf("line %d links to %q, want the full URL", i, m[1])
+			}
+			if m[1] == url {
+				linked++
+			}
+		}
+	}
+	if linked < 2 {
+		t.Fatalf("only %d pieces carry the link", linked)
+	}
+	// text itself is unchanged
+	var plain strings.Builder
+	for _, l := range lines {
+		plain.WriteString(ansi.Strip(l))
+	}
+	if !strings.Contains(strings.ReplaceAll(plain.String(), " ", ""), strings.ReplaceAll(url, " ", "")) {
+		t.Fatal("link text changed")
+	}
+	// www. links get a scheme so they open
+	if m := osc8.FindStringSubmatch(formatText("go to www.iiit.ac.in", 40, lipgloss.NewStyle(), nil)[0]); m == nil || m[1] != "https://www.iiit.ac.in" {
+		t.Fatalf("www link: %v", m)
+	}
+	// code spans are never links
+	if osc8.MatchString(formatText("`https://x.io/a`", 40, lipgloss.NewStyle(), nil)[0]) {
+		t.Fatal("link inside code")
+	}
+}
+
+// A wide character (Japanese, emoji) that doesn't fit an empty line used to
+// loop forever and freeze the app.
+func TestWrapSpansNarrowWideChars(t *testing.T) {
+	done := make(chan []string)
+	go func() {
+		var out []string
+		for _, w := range []int{-3, 0, 1} {
+			out = append(out, wrapSpans([]span{{text: "ますみ 🙂ok"}}, w, lipgloss.NewStyle())...)
+		}
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		if got := stripANSI(strings.Join(out, "|")); !strings.Contains(got, "ま|す|み") || !strings.Contains(got, "🙂") {
+			t.Fatalf("lines = %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("wrapSpans never returned")
 	}
 }

@@ -108,5 +108,6 @@ type Conversation struct {
 	Unread      uint16
 	IsPinned    bool
 	IsArchived  bool
-	Index       int // Heap index for internal use
+	Mentioned   bool // an unread message mentions you
+	Index       int  // Heap index for internal use
 }

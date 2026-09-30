@@ -311,10 +311,6 @@ func TestAKeyAttachesInsteadOfInsert(t *testing.T) {
 	if !strings.Contains(m.notice, "yazi not found") {
 		t.Fatalf("a did not try to attach: notice %q", m.notice)
 	}
-	m, _ = keys(t, m, "A")
-	if m.mode != modeNormal || m.notice != "yazi not found; install it or use :attach <path>" {
-		t.Fatalf("A should do nothing in a chat now (mode %d)", m.mode)
-	}
 	m, _ = keys(t, m, "i")
 	if m.mode != modeInsert {
 		t.Fatal("i should still start insert mode")

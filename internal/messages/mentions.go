@@ -121,3 +121,22 @@ func (sm *SessionManager) SendText(ctx context.Context, chat, text string, menti
 	_, err = sm.sendTracked(ctx, jid, msg, Message{Text: text}, truncatePreview(text))
 	return err
 }
+
+// mentionsMe reports whether a message @mentions you (by phone number or
+// by your hidden LID).
+func (sm *SessionManager) mentionsMe(msg *waE2E.Message) bool {
+	client := sm.getClient()
+	if client == nil || client.Store.ID == nil {
+		return false
+	}
+	for _, j := range contextInfo(msg).GetMentionedJID() {
+		jid, err := types.ParseJID(j)
+		if err != nil {
+			continue
+		}
+		if jid.User == client.Store.ID.User || (!client.Store.LID.IsEmpty() && jid.User == client.Store.LID.User) {
+			return true
+		}
+	}
+	return false
+}

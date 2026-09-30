@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	signallogger "go.mau.fi/libsignal/logger"
 
 	"github.com/Srindot/whatsapp-tui/internal/config"
 	"github.com/Srindot/whatsapp-tui/internal/qrcode"
@@ -335,4 +336,21 @@ func (sm *SessionManager) logout() error {
 	sm.uiHandler.PrintText("Successfully logged out")
 	sm.StatusChannel <- StatusMsg{false, nil}
 	return nil
+}
+
+// signalLogger routes the Signal library's logs to the debug log. Its
+// default logger prints to stdout, which draws over the TUI (e.g. the
+// harmless "received message with old counter" for re-sent old messages).
+type signalLogger struct{ sm *SessionManager }
+
+func (l signalLogger) Debug(caller, msg string)   {}
+func (l signalLogger) Info(caller, msg string)    {}
+func (l signalLogger) Warning(caller, msg string) { l.sm.debugf("signal: %s %s", caller, msg) }
+func (l signalLogger) Error(caller, msg string)   { l.sm.debugf("signal: %s %s", caller, msg) }
+func (l signalLogger) Configure(string)           {}
+
+// quietSignalLogs installs signalLogger (called once at startup).
+func (sm *SessionManager) quietSignalLogs() {
+	var l signallogger.Loggable = signalLogger{sm}
+	signallogger.Setup(&l)
 }

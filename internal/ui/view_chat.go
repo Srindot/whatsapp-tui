@@ -119,7 +119,7 @@ func (m Model) renderChatPane(width, height int) string {
 		}
 		title = " " + m.avatarCells(m.current, avatarSmallCols, avatarSmallRows, false)[0] + " " +
 			styleTitle.Render(chatName(m.current)) + styleDim.Render("  "+kind)
-		if m.readReceiptsOff && kind == "contact" && !m.privacy.IsSelfChat(m.current.JID) {
+		if m.readReceiptsOff && kind == "contact" && !m.selfChat {
 			// explains why messages here stop at delivered
 			title += styleMuted.Render("  ·  your read receipts are off: ") +
 				statusMark(messages.StatusDelivered) + styleMuted.Render(" is as far as it goes")
@@ -190,6 +190,16 @@ func (m Model) renderMessages(width int) (string, []msgSpan) {
 		add("")
 		if sender != lastSender && lastSender != "" {
 			add("")
+		}
+		if m.unreadID != "" && msg.Id == m.unreadID {
+			label := fmt.Sprintf(" %d unread messages ", m.unreadCount)
+			if m.unreadCount == 1 {
+				label = " 1 unread message "
+			}
+			line := lipgloss.NewStyle().Foreground(colorWarm).Render("── ") + styleUnread.Bold(true).Render(label) +
+				lipgloss.NewStyle().Foreground(colorWarm).Render(" ──")
+			add("")
+			add(lipgloss.PlaceHorizontal(width, lipgloss.Center, line))
 		}
 		start := lines
 		selected := m.mode == modeVisual && i == m.sel
@@ -287,7 +297,8 @@ func (m Model) renderBubble(msg messages.Message, showSender, selected bool, max
 		border, stampStyle = pal.Iris, styleStampMe
 	}
 	failed := msg.FromMe && msg.Status == messages.StatusFailed
-	if failed {
+	mentionsYou := !msg.FromMe && mentionsYou(msg)
+	if failed || mentionsYou {
 		border = pal.Love
 	}
 	if selected {
@@ -308,6 +319,9 @@ func (m Model) renderBubble(msg messages.Message, showSender, selected bool, max
 		}
 		lines = append(lines, senderStyle(msg.ContactId).Render(ansi.Truncate(name, maxInner, "…")))
 	}
+	if mentionsYou {
+		lines = append(lines, styleMention.Render("@ mentioned you"))
+	}
 	if msg.Forwarded {
 		lines = append(lines, styleMuted.Italic(true).Render("↪ Forwarded"))
 	}
@@ -324,6 +338,10 @@ func (m Model) renderBubble(msg messages.Message, showSender, selected bool, max
 			}
 			text = strings.TrimSpace("▶ Video" + dur + "  " + text)
 		}
+	}
+	if isDeletedNote(msg) {
+		lines = append(lines, styleMuted.Italic(true).Render(msg.Text))
+		text = ""
 	}
 	if text != "" {
 		if m.search != nil && matchesQuery(text, m.search.query) {
@@ -387,10 +405,15 @@ func (m Model) renderBubble(msg messages.Message, showSender, selected bool, max
 		}
 		bubble = lipgloss.JoinVertical(align, bubble, " "+r+" ")
 	}
-	if selected {
-		// a marker in the gutter makes the selection easy to spot
+	if selected || mentionsYou {
+		// a marker in the gutter makes the selection (or a mention of
+		// you) easy to spot
 		h := lipgloss.Height(bubble)
-		gutter := lipgloss.NewStyle().Foreground(pal.Rose).Render(strings.TrimSuffix(strings.Repeat("▌\n", h), "\n"))
+		gutterColor := pal.Love
+		if selected {
+			gutterColor = pal.Rose
+		}
+		gutter := lipgloss.NewStyle().Foreground(gutterColor).Render(strings.TrimSuffix(strings.Repeat("▌\n", h), "\n"))
 		if msg.FromMe {
 			return lipgloss.JoinHorizontal(lipgloss.Top,
 				lipgloss.PlaceHorizontal(width-2, lipgloss.Right, bubble), gutter)
@@ -428,4 +451,19 @@ func statusMark(status int) string {
 		return fg(pal.Love, "✕")
 	}
 	return ""
+}
+
+// mentionsYou reports whether a message @mentions you.
+func mentionsYou(msg messages.Message) bool {
+	for _, name := range msg.Mentions {
+		if name == "You" {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeletedNote reports a message that was deleted for everyone.
+func isDeletedNote(msg messages.Message) bool {
+	return len(msg.Media) == 0 && (msg.Text == "🚫 This message was deleted" || msg.Text == "🚫 You deleted this message")
 }

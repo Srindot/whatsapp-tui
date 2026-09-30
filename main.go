@@ -81,6 +81,7 @@ func run() error {
 		Stickers:        sm,
 		Mentioner:       sm,
 		Pictures:        sm,
+		Deleter:         sm,
 	}
 	if opts.Images == termimg.ModeKitty {
 		kitty, err := termimg.NewKitty(os.Stdout)
@@ -92,7 +93,7 @@ func run() error {
 		}
 	}
 	model := ui.New(sm.CommandChannel, sm.Conversations(), opts)
-	progOpts := []tea.ProgramOption{tea.WithAltScreen()}
+	progOpts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithReportFocus()} // focus: only mark chats read while you look
 	if config.Config.Ui.Mouse {
 		progOpts = append(progOpts, tea.WithMouseCellMotion())
 	}

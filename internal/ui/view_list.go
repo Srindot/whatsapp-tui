@@ -47,6 +47,11 @@ func (m Model) listTitle(width int) string {
 	}
 	if m.filter != "" {
 		title += styleFilter.Render("  /" + m.filter)
+		if m.mode == modeFilter {
+			title += styleMuted.Render("  ctrl+n/p move · enter browse")
+		} else {
+			title += styleMuted.Render("  esc clear")
+		}
 	}
 	return title
 }
@@ -114,10 +119,20 @@ func (m Model) renderEntry(c *messages.Conversation, width int, sel, open bool, 
 		right1 = paint(styleMuted, sel).Render("📌 ") + right1
 	}
 
-	left2 := marker + av[1] + fill.Render(" ") + paint(previewStyle, sel).Render(previewText(c))
+	preview := paint(previewStyle, sel).Render(previewText(c))
+	switch {
+	case c.LastMsgTime == 0:
+		preview = paint(styleMuted, sel).Italic(true).Render("start a new chat")
+	case c.IsArchived && !m.archive:
+		preview = paint(styleMuted, sel).Render("📦 ") + preview // archived chat found by the filter
+	}
+	left2 := marker + av[1] + fill.Render(" ") + preview
 	right2 := fill.Render(" ")
 	if unread {
 		right2 = styleBadge.Render(fmt.Sprint(c.Unread)) + fill.Render(" ")
+	}
+	if c.Mentioned && unread {
+		right2 = styleMentionBadge.Render("@") + fill.Render(" ") + right2
 	}
 	return fitRow(left1, right1, width, fill) + "\n" + fitRow(left2, right2, width, fill)
 }
@@ -127,8 +142,7 @@ func (m Model) renderEntry(c *messages.Conversation, width int, sel, open bool, 
 func (m Model) renderList(width, height int, focused bool) string {
 	var b strings.Builder
 	b.WriteString(m.renderHeader(m.listTitle(width), width, focused))
-	chats := m.visibleChats()
-	if len(chats) == 0 {
+	if m.listLen() == 0 {
 		b.WriteString("\n\n" + styleDim.Render(emptyListText(m)))
 		return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(b.String())
 	}
@@ -139,9 +153,13 @@ func (m Model) renderList(width, height int, focused bool) string {
 	indent := 2 + avatarBigCols + 1
 	divider := strings.Repeat(" ", indent) +
 		lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", max(width-indent-1, 0)))
-	for i := m.listOffset; i < len(chats) && i < m.listOffset+rows; i++ {
-		c := chats[i]
+	for i := m.listOffset; i < m.listLen() && i < m.listOffset+rows; i++ {
+		c, archiveRow := m.itemAt(i)
 		sel := i == m.cursor && focused
+		if archiveRow {
+			b.WriteString("\n" + m.renderArchiveRow(width, sel) + "\n" + divider)
+			continue
+		}
 		open := m.screen == screenChat && m.current != nil && c.JID == m.current.JID
 		b.WriteString("\n" + m.renderEntry(c, width, sel, open, now) + "\n" + divider)
 	}
@@ -169,4 +187,34 @@ func emptyListText(m Model) string {
 	default:
 		return "  No chats yet."
 	}
+}
+
+// renderArchiveRow is the "Archived" entry at the top of the inbox.
+func (m Model) renderArchiveRow(width int, sel bool) string {
+	fill := paint(lipgloss.NewStyle(), sel)
+	marker := fill.Render("  ")
+	if sel {
+		marker = paint(styleAccent, sel).Render("▌ ")
+	}
+	archivedUnread, mentioned := 0, false
+	for _, c := range m.chats {
+		if c.IsArchived && c.Unread > 0 {
+			archivedUnread++
+			mentioned = mentioned || c.Mentioned
+		}
+	}
+	_, archived, _ := m.chatCounts()
+	icon := lipgloss.NewStyle().Width(avatarBigCols).Align(lipgloss.Center)
+	left1 := marker + paint(icon, sel).Render("📦") + fill.Render(" ") + paint(styleNameBold, sel).Render("Archived")
+	right1 := paint(styleDim, sel).Render(fmt.Sprint(archived)) + fill.Render(" ")
+	hint := "enter to open · A from anywhere"
+	if archivedUnread > 0 {
+		hint = fmt.Sprintf("%d with unread messages", archivedUnread)
+	}
+	left2 := marker + paint(icon, sel).Render("") + fill.Render(" ") + paint(styleDim, sel).Render(hint)
+	right2 := fill.Render(" ")
+	if mentioned {
+		right2 = styleMentionBadge.Render("@") + fill.Render(" ")
+	}
+	return fitRow(left1, right1, width, fill) + "\n" + fitRow(left2, right2, width, fill)
 }

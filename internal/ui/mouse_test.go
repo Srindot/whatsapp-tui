@@ -2,7 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/skratchdot/open-golang/open"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -99,5 +103,61 @@ func TestMouseIgnoredUnderOverlays(t *testing.T) {
 	m, _ = click(t, m, 20, 3)
 	if m.screen != screenList || !m.showHelp {
 		t.Fatal("click went through the help screen")
+	}
+}
+
+func TestClickOpensLinks(t *testing.T) {
+	var opened []string
+	openURL = func(u string) error { opened = append(opened, u); return nil }
+	defer func() { openURL = open.Start }()
+
+	long := "https://www.linkedin.com/jobs/view/4470560160/?refId=abcdefghijkl&trackingId=xyz"
+	m := mouseModel(t, 3)
+	m, _ = keys(t, m, "enter")
+	next, _ := m.Update(screenMsg{
+		{Id: "1", ChatId: m.current.JID, ContactId: "x", Timestamp: 1700000000, Text: "short https://example.com/a here"},
+		{Id: "2", ChatId: m.current.JID, ContactId: "x", Timestamp: 1700000060, Text: "job: " + long},
+	})
+	m = next.(Model)
+
+	// find where text is drawn on screen (column in cells)
+	find := func(needle string) (int, int) {
+		for y, line := range strings.Split(ansi.Strip(m.View()), "\n") {
+			if i := strings.Index(line, needle); i >= 0 {
+				return ansi.StringWidth(line[:i]), y
+			}
+		}
+		t.Fatalf("%q not on screen", needle)
+		return 0, 0
+	}
+	for _, tc := range []struct{ needle, want string }{
+		{"example.com", "https://example.com/a"},
+		{"https://www.link", long}, // first line of the wrapped link
+		{"refId", long},            // a continuation line
+	} {
+		opened = nil
+		x, y := find(tc.needle)
+		m2, cmd := click(t, m, x+2, y)
+		drain(t, m2, cmd)
+		if len(opened) != 1 || opened[0] != tc.want {
+			t.Fatalf("click on %q opened %v, want %s", tc.needle, opened, tc.want)
+		}
+	}
+	// plain text next to a link opens nothing
+	opened = nil
+	x, y := find("short")
+	m2, cmd := click(t, m, x+1, y)
+	drain(t, m2, cmd)
+	if len(opened) != 0 {
+		t.Fatalf("click on plain text opened %v", opened)
+	}
+}
+
+func TestURLAtColumn(t *testing.T) {
+	line := "ab\x1b[1m\x1b]8;;https://x.io\x1b\\link\x1b]8;;\x1b\\\x1b[0m end ✨ \x1b]8;;https://y.io\x07yy\x1b]8;;\x07"
+	for col, want := range map[int]string{0: "", 2: "https://x.io", 5: "https://x.io", 6: "", 11: "", 13: "", 14: "https://y.io", 15: "https://y.io", 16: ""} {
+		if got := urlAtColumn(line, col); got != want {
+			t.Errorf("col %d: %q, want %q", col, got, want)
+		}
 	}
 }

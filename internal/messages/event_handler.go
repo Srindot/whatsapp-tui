@@ -34,12 +34,19 @@ func (eh *eventHandler) Handle(evt interface{}) {
 		eh.sm.scheduleNameRefresh()
 	case *events.Receipt:
 		eh.sm.handleReceipt(v)
+	case *events.DeleteForMe:
+		eh.sm.handleDeleteForMe(v)
+	case *events.DeleteChat:
+		eh.sm.handleDeleteChat(v)
 	case *events.Archive:
 		archived := v.Action.GetArchived()
 		eh.sm.setChatFlags(v.JID, &archived, nil)
 	case *events.Pin:
 		pinned := v.Action.GetPinned()
 		eh.sm.setChatFlags(v.JID, nil, &pinned)
+	case *events.MarkChatAsRead:
+		// read (or marked unread) on your phone or another device
+		eh.sm.setChatRead(v.JID, v.Action.GetRead())
 	case *events.Disconnected:
 		eh.sm.StatusChannel <- StatusMsg{false, nil}
 		// Attempt auto-reconnect unless logged out or already reconnecting
@@ -224,6 +231,7 @@ func (eh *eventHandler) processIncomingMessage(evt *events.Message, text, previe
 	// internally calls getClient() which acquires mu.RLock — calling it
 	// under mu.Lock would deadlock.
 	chatName := eh.sm.getChatName(evt.Info.Chat)
+	mentionsMe := !evt.Info.IsFromMe && eh.sm.mentionsMe(evt.Message) // same: takes mu
 
 	// Update priority queue and conversation
 	eh.sm.mu.Lock()
@@ -235,6 +243,7 @@ func (eh *eventHandler) processIncomingMessage(evt *events.Message, text, previe
 		if !evt.Info.IsFromMe {
 			conv.Unread++
 		}
+		conv.Mentioned = conv.Mentioned || mentionsMe
 		eh.sm.priorityQueue.Update(conv, conv.LastMsgTime, conv.IsPinned)
 		toUpsert = *conv
 	} else {
@@ -249,6 +258,7 @@ func (eh *eventHandler) processIncomingMessage(evt *events.Message, text, previe
 			Preview:     preview,
 			Unread:      unread,
 			IsPinned:    false,
+			Mentioned:   mentionsMe,
 		}
 		heap.Push(&eh.sm.priorityQueue, newConv)
 		eh.sm.convByJID[chatJID] = newConv
@@ -290,6 +300,10 @@ func (eh *eventHandler) handleMessage(evt *events.Message) {
 	eh.sm.canonicalSource(context.Background(), &evt.Info.MessageSource)
 	if r := evt.Message.GetReactionMessage(); r != nil {
 		eh.sm.handleReaction(evt.Info.Chat.String(), evt.Info.Sender, evt.Info.IsFromMe, r)
+		return
+	}
+	if pm := evt.Message.GetProtocolMessage(); pm != nil && pm.GetType() == waE2E.ProtocolMessage_REVOKE {
+		eh.sm.handleRevoke(evt.Info.Chat.String(), pm, evt.Info.IsFromMe)
 		return
 	}
 	text, preview := extractMessageContent(evt.Message)

@@ -11,7 +11,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
+	"github.com/skratchdot/open-golang/open"
 
 	"github.com/Srindot/whatsapp-tui/internal/messages"
 	"github.com/Srindot/whatsapp-tui/internal/termimg"
@@ -196,7 +198,7 @@ func TestVisualCopyAndDownload(t *testing.T) {
 		t.Fatalf("copied %q, notice %q", got.text, m.notice)
 	}
 
-	m, cmds = keys(t, m, "d")
+	m, cmds = keys(t, m, "s") // s saves (d is delete)
 	m = drain(t, m, tea.Batch(cmds...))
 	if !m.noticeErr || !strings.Contains(m.notice, "no downloadable media") {
 		t.Fatalf("text download notice = %q", m.notice)
@@ -216,7 +218,7 @@ func TestDownloadDirCommand(t *testing.T) {
 	if !strings.Contains(m.notice, "Downloads now go to") {
 		t.Fatalf("notice = %q", m.notice)
 	}
-	m, cmds := keys(t, m, "v", "g", "g", "d")
+	m, cmds := keys(t, m, "v", "g", "g", "s")
 	drain(t, m, tea.Batch(cmds...))
 	if len(a.saved) != 1 || a.saved[0] != "m1|"+dir {
 		t.Fatalf("saved = %v", a.saved)
@@ -255,11 +257,17 @@ func TestInfoPanel(t *testing.T) {
 func TestUnreadFilterAndBadge(t *testing.T) {
 	m := visualModel(t, &fakeActions{}, fakeClip{})
 	m, _ = keys(t, m, "backspace")
+	// Hostel was read by opening it; then a message arrives from Arjun
+	next, _ := m.Update(chatListMsg{
+		{JID: groupJID, Name: "Hostel", LastMsgTime: 300},
+		{JID: "91111@s.whatsapp.net", Name: "Arjun", LastMsgTime: 400, Unread: 1},
+	})
+	m = next.(Model)
 	if v := stripANSI(m.View()); !strings.Contains(v, "● 1 unread") || !strings.Contains(v, "┃") && !strings.Contains(v, "▌") {
 		t.Fatalf("unread not highlighted:\n%s", v)
 	}
 	m, _ = keys(t, m, "u")
-	if n := len(m.visibleChats()); n != 1 || m.visibleChats()[0].JID != groupJID {
+	if n := len(m.visibleChats()); n != 1 || m.visibleChats()[0].Name != "Arjun" {
 		t.Fatalf("unread filter shows %d chats", n)
 	}
 	m, _ = keys(t, m, "u")
@@ -412,5 +420,41 @@ func TestReadReceiptsOffNote(t *testing.T) {
 	m, _ = keys(t, m, "h", "j", "enter") // your own chat: everything is read
 	if strings.Contains(stripANSI(m.View()), note) {
 		t.Fatal("note shown in your own chat")
+	}
+}
+
+func TestLinksInChatAndOpenWithO(t *testing.T) {
+	var opened []string
+	openURL = func(u string) error { opened = append(opened, u); return nil }
+	defer func() { openURL = open.Start }()
+
+	url := "https://www.linkedin.com/jobs/view/4470560160/?refId=abcdefghijkl&trackingId=xyz"
+	m := visualModel(t, &fakeActions{}, fakeClip{})
+	msgs := groupMsgs()
+	msgs = append(msgs, messages.Message{Id: "m9", ChatId: groupJID, ContactId: "91111@s.whatsapp.net",
+		ContactShort: "Arjun", Timestamp: 1700000500, Text: "job: " + url + " and www.iiit.ac.in"})
+	next, _ := m.Update(screenMsg(msgs))
+	m = next.(Model)
+
+	view := m.View()
+	pieces := 0
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > 120 {
+			t.Fatal("a line overflows the screen")
+		}
+		for _, mm := range osc8.FindAllStringSubmatch(line, -1) {
+			if mm[1] == url {
+				pieces++
+			}
+		}
+	}
+	if pieces < 2 {
+		t.Fatalf("the wrapped link is marked on %d lines, want every line it spans", pieces)
+	}
+
+	m, cmds := keys(t, m, "v", "o")
+	m = drain(t, m, tea.Batch(cmds...))
+	if len(opened) != 1 || opened[0] != url || m.notice != "Opened the first of 2 links" {
+		t.Fatalf("opened %v, notice %q", opened, m.notice)
 	}
 }

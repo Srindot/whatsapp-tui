@@ -275,6 +275,19 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 			latestPreview = "New chat"
 		}
 
+		// Resolve a new chat's name before taking the lock: contactName
+		// takes sm.mu itself, and holding it here deadlocked the app.
+		sm.mu.RLock()
+		known := sm.convByJID[jidStr] != nil
+		sm.mu.RUnlock()
+		if !known {
+			if isPlaceholderName(name, chatJID.User) && chatJID.Server != types.GroupServer {
+				name = sm.contactName(context.Background(), chatJID)
+			} else if name == "" {
+				name = chatJID.User
+			}
+		}
+
 		// --- Update priority queue ---
 		sm.mu.Lock()
 		existingConv := sm.convByJID[jidStr]
@@ -319,10 +332,8 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 				toUpsert = append(toUpsert, c)
 			}
 		} else {
-			// New conversation — use history name or resolve the contact
-			if isPlaceholderName(name, chatJID.User) && chatJID.Server != types.GroupServer {
-				name = sm.contactName(context.Background(), chatJID)
-			} else if name == "" {
+			// New conversation: name resolved above
+			if name == "" {
 				name = chatJID.User
 			}
 			newConv := &Conversation{

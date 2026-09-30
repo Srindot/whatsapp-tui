@@ -3,13 +3,18 @@ package messages
 import (
 	"container/heap"
 	"context"
+	"io"
+	"os"
 	"testing"
 	"time"
 
+	signallogger "go.mau.fi/libsignal/logger"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -186,5 +191,66 @@ func TestResolveMentions(t *testing.T) {
 	}
 	if msgs[3].Mentions != nil {
 		t.Fatal("mentions found where there are none")
+	}
+}
+
+func TestMentionsMe(t *testing.T) {
+	sm, _ := lidSM(t)
+	own, _ := types.ParseJID("918331840042@s.whatsapp.net")
+	lid, _ := types.ParseJID("144989690589358@lid")
+	sm.client.Store.ID, sm.client.Store.LID = &own, lid
+	mk := func(jids ...string) *waE2E.Message {
+		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("hi"), ContextInfo: &waE2E.ContextInfo{MentionedJID: jids}}}
+	}
+	if !sm.mentionsMe(mk("918331840042@s.whatsapp.net")) || !sm.mentionsMe(mk("111@lid", "144989690589358@lid")) {
+		t.Fatal("mention of you not detected")
+	}
+	if sm.mentionsMe(mk("919999999999@s.whatsapp.net")) || sm.mentionsMe(&waE2E.Message{Conversation: proto.String("x")}) {
+		t.Fatal("false mention")
+	}
+	// the flag is stored with the chat
+	if err := sm.db.UpsertConversation(Conversation{JID: "g@g.us", Name: "G", LastMsgTime: 1, Mentioned: true}); err != nil {
+		t.Fatal(err)
+	}
+	convs, _ := sm.db.GetConversations()
+	if len(convs) != 1 || !convs[0].Mentioned {
+		t.Fatalf("mentioned flag not stored: %+v", convs)
+	}
+}
+
+func TestSignalLogsDontReachStdout(t *testing.T) {
+	sm := &SessionManager{uiHandler: NewMockUiHandler()}
+	sm.quietSignalLogs()
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	signallogger.Error("Unable to get or create message keys: ", "received message with old counter")
+	signallogger.Warning("something")
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if len(out) != 0 {
+		t.Fatalf("signal library printed to stdout: %q", out)
+	}
+}
+
+// Reading a chat on your phone clears it here too.
+func TestReadOnPhoneClearsUnread(t *testing.T) {
+	sm, _ := lidSM(t)
+	c := &Conversation{JID: testPN, Name: "Aneesh Sambu", LastMsgTime: 100, Unread: 5, Mentioned: true}
+	heap.Push(&sm.priorityQueue, c)
+	sm.convByJID[c.JID] = c
+	lid, _ := types.ParseJID(testLID) // phone reports the chat by LID
+	sm.setChatRead(lid, true)
+	if c.Unread != 0 || c.Mentioned {
+		t.Fatalf("still unread: %+v", c)
+	}
+	sm.setChatRead(lid, false) // "mark as unread"
+	if c.Unread != 1 {
+		t.Fatalf("mark unread: %+v", c)
+	}
+	if convs, _ := sm.db.GetConversations(); len(convs) != 1 || convs[0].Unread != 1 {
+		t.Fatalf("not persisted: %+v", convs)
 	}
 }

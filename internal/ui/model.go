@@ -65,13 +65,20 @@ type Model struct {
 	archive    bool                     // showing archived chats instead of the inbox
 	unreadOnly bool                     // list shows only chats with unread messages
 	filter     string
-	cursor     int // index into visibleChats()
+	cursor     int // index into the list items (see itemAt)
 	listOffset int
 
 	current  *messages.Conversation // chat open on the right, nil if none
 	msgs     []messages.Message
 	msgSpans []msgSpan // content lines of each message, for lazy image loading
-	vp       viewport.Model
+	msgLines []string  // the rendered message lines (for clicking links)
+
+	// unread messages when the chat was opened: shown with a divider
+	unreadFor   string // chat JID
+	unreadCount int
+	unreadID    string // first unread message, found once messages load
+	focused     bool   // the terminal window has focus (unfocused: nothing counts as seen)
+	vp          viewport.Model
 
 	img *images // nil-safe; nil disables images and avatars
 
@@ -98,6 +105,9 @@ type Model struct {
 	stk      *stickerPicker // sticker/GIF tray, nil when closed
 	stickers StickerSender
 
+	view     *mediaView     // full-screen photo/sticker/GIF viewer, nil when closed
+	confirm  *confirmDelete // waiting for enter to delete, nil otherwise
+	deleter  Deleter
 	pic      *pictureView // full-screen profile picture, nil when closed
 	pictures PictureSource
 
@@ -109,6 +119,7 @@ type Model struct {
 	privacy         Privacy
 	privacyChecked  bool
 	readReceiptsOff bool // your WhatsApp privacy setting; chats stop at delivered
+	selfChat        bool // the open chat is your own (asked once on open, never while drawing)
 
 	compose textarea.Model
 	cmdline textinput.Model
@@ -142,6 +153,7 @@ type Options struct {
 	Stickers       StickerSender  // sends stickers and GIFs; may be nil
 	Mentioner      Mentioner      // group members for @mentions; may be nil
 	Pictures       PictureSource  // full-size profile pictures; may be nil
+	Deleter        Deleter        // deletes messages and chats; may be nil
 }
 
 // Privacy reads WhatsApp privacy settings; *messages.SessionManager
@@ -194,7 +206,9 @@ func New(commands chan<- messages.Command, initial []*messages.Conversation, opt
 		stickers:       opts.Stickers,
 		mentioner:      opts.Mentioner,
 		pictures:       opts.Pictures,
+		deleter:        opts.Deleter,
 		members:        map[string][]messages.GroupMember{},
+		focused:        true, // until the terminal says otherwise
 	}
 	if m.clip == nil {
 		m.clip = systemClipboard{}
@@ -231,6 +245,8 @@ func (m *Model) setChats(cs []*messages.Conversation) {
 	if c := m.selectedChat(); c != nil {
 		selected = c.JID
 	}
+	_, onArchiveRow := m.itemAt(m.cursor)
+	onArchiveRow = onArchiveRow && m.chats != nil
 	// Contacts you never messaged come without a timestamp; like WhatsApp,
 	// only show actual conversations.
 	list := make([]*messages.Conversation, 0, len(cs))
@@ -246,9 +262,14 @@ func (m *Model) setChats(cs []*messages.Conversation) {
 	}
 	sortChats(list)
 	m.chats = list
+	// keep the cursor where it was; start on the newest chat, not the
+	// archive row (enter right after launch opens your latest chat)
 	m.cursor = 0
-	for i, c := range m.visibleChats() {
-		if c.JID == selected {
+	if m.hasArchiveRow() && !onArchiveRow {
+		m.cursor = 1
+	}
+	for i := 0; i < m.listLen(); i++ {
+		if c, _ := m.itemAt(i); c != nil && c.JID == selected {
 			m.cursor = i
 			break
 		}
@@ -266,18 +287,55 @@ func (m *Model) setChats(cs []*messages.Conversation) {
 
 // visibleChats is the current list (inbox or archive), filtered.
 func (m Model) visibleChats() []*messages.Conversation {
-	q := strings.ToLower(m.filter)
+	q := strings.ToLower(strings.TrimSpace(m.filter))
 	out := make([]*messages.Conversation, 0, len(m.chats))
 	for _, c := range m.chats {
 		if c.IsArchived != m.archive || (m.unreadOnly && c.Unread == 0) {
 			continue
 		}
-		if q != "" && !strings.Contains(strings.ToLower(chatName(c)), q) {
+		if q != "" && !filterMatches(c, q) {
 			continue
 		}
 		out = append(out, c)
 	}
+	// While filtering, also offer contacts you haven't chatted with yet
+	// (archived chats too), so you can start a chat with anyone.
+	if q != "" && !m.archive && !m.unreadOnly {
+		seen := make(map[string]bool, len(out))
+		for _, c := range out {
+			seen[c.JID] = true
+		}
+		n := 0
+		for _, c := range m.allChats {
+			if seen[c.JID] || n >= maxContactResults || !filterMatches(c, q) {
+				continue
+			}
+			if c.LastMsgTime > 0 && !c.IsArchived {
+				continue // already listed above
+			}
+			out = append(out, c)
+			n++
+		}
+	}
 	return out
+}
+
+// maxContactResults caps extra contacts shown while filtering.
+const maxContactResults = 30
+
+// filterMatches: the name contains q, or q's digits are in the number.
+func filterMatches(c *messages.Conversation, q string) bool {
+	if strings.Contains(strings.ToLower(chatName(c)), q) {
+		return true
+	}
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, q)
+	return len(digits) >= 4 && len(digits) == len(strings.ReplaceAll(strings.ReplaceAll(q, " ", ""), "+", "")) &&
+		strings.Contains(strings.Split(c.JID, "@")[0], digits)
 }
 
 // chatCounts returns how many chats are in the inbox and the archive, and
@@ -304,16 +362,55 @@ func (m *Model) toggleArchive() {
 	m.clampCursor()
 }
 
-func (m Model) selectedChat() *messages.Conversation {
-	v := m.visibleChats()
-	if m.cursor >= 0 && m.cursor < len(v) {
-		return v[m.cursor]
+// hasArchiveRow: the inbox starts with an "Archived" row, like WhatsApp.
+func (m Model) hasArchiveRow() bool {
+	if m.archive || m.filter != "" || m.unreadOnly {
+		return false
 	}
-	return nil
+	_, archived, _ := m.chatCounts()
+	return archived > 0
+}
+
+// listLen is the number of list items (chats, plus the archive row).
+func (m Model) listLen() int {
+	n := len(m.visibleChats())
+	if m.hasArchiveRow() {
+		n++
+	}
+	return n
+}
+
+// itemAt returns list item i: a chat, or (nil, true) for the archive row.
+func (m Model) itemAt(i int) (c *messages.Conversation, archiveRow bool) {
+	if m.hasArchiveRow() {
+		if i == 0 {
+			return nil, true
+		}
+		i--
+	}
+	if v := m.visibleChats(); i >= 0 && i < len(v) {
+		return v[i], false
+	}
+	return nil, false
+}
+
+func (m Model) selectedChat() *messages.Conversation {
+	c, _ := m.itemAt(m.cursor)
+	return c
+}
+
+// openSelected opens the chat under the cursor, or the archive.
+func (m *Model) openSelected() tea.Cmd {
+	c, archiveRow := m.itemAt(m.cursor)
+	if archiveRow {
+		m.toggleArchive()
+		return nil
+	}
+	return m.openChat(c)
 }
 
 func (m *Model) clampCursor() {
-	n := len(m.visibleChats())
+	n := m.listLen()
 	if m.cursor >= n {
 		m.cursor = n - 1
 	}
@@ -349,6 +446,7 @@ func (m *Model) openChat(c *messages.Conversation) tea.Cmd {
 	m.focus = paneMessages
 	if m.current == nil || m.current.JID != c.JID {
 		m.current = c
+		m.selfChat = m.privacy != nil && m.privacy.IsSelfChat(c.JID)
 		m.msgs = nil
 		m.compose.SetValue("")
 		m.replyTo = nil
@@ -356,13 +454,58 @@ func (m *Model) openChat(c *messages.Conversation) tea.Cmd {
 		m.mention, m.chosen = nil, nil
 		m.search = nil
 		m.compose.SetHeight(1)
-		m.refreshMessages(true)
+	}
+	// always open at the first unread message, or else the newest
+	m.unreadFor, m.unreadCount, m.unreadID = "", 0, ""
+	if c.Unread > 0 {
+		m.unreadFor, m.unreadCount = c.JID, int(c.Unread)
 	}
 	if m.mode == modeVisual {
 		m.mode = modeNormal
 	}
+	m.sel = len(m.msgs) - 1
 	m.resize()
-	return m.dispatch("select", c.JID)
+	m.refreshMessages(true)
+	return tea.Batch(m.dispatch("select", c.JID), m.markSeen())
+}
+
+// markSeen marks the open chat read when you're looking at it: it's on
+// screen and the terminal has focus. Called on open, when the chat list
+// changes (a new message arrived) and when the window gets focus back.
+func (m *Model) markSeen() tea.Cmd {
+	if m.screen != screenChat || m.current == nil || !m.focused {
+		return nil
+	}
+	jid, unseen := m.current.JID, false
+	for _, list := range [][]*messages.Conversation{m.chats, m.allChats, {m.current}} {
+		for _, c := range list {
+			if c.JID == jid && (c.Unread > 0 || c.Mentioned) {
+				c.Unread, c.Mentioned, unseen = 0, false, true // shown as read right away
+			}
+		}
+	}
+	if !unseen {
+		return nil
+	}
+	return m.dispatch("read", jid)
+}
+
+// clearFilter ends a chat-list search, keeping the cursor on the same chat
+// when it's still listed.
+func (m *Model) clearFilter() {
+	c := m.selectedChat()
+	m.filter = ""
+	m.cursor = 0
+	if m.hasArchiveRow() {
+		m.cursor = 1
+	}
+	for i := 0; c != nil && i < m.listLen(); i++ {
+		if x, _ := m.itemAt(i); x != nil && x.JID == c.JID {
+			m.cursor = i
+			break
+		}
+	}
+	m.clampCursor()
 }
 
 func (m *Model) back() {
@@ -397,7 +540,7 @@ func (m Model) loadVisible() tea.Cmd {
 		}
 		return tea.Batch(cmds...)
 	}
-	if m.img == nil || m.width == 0 || m.qr != "" || m.showHelp || m.info != nil || m.global != nil || m.fwd != nil || m.pic != nil {
+	if m.img == nil || m.width == 0 || m.qr != "" || m.showHelp || m.info != nil || m.global != nil || m.fwd != nil || m.pic != nil || m.view != nil {
 		return nil
 	}
 	var cmds []tea.Cmd
@@ -406,9 +549,10 @@ func (m Model) loadVisible() tea.Cmd {
 			cmds = append(cmds, c)
 		}
 	}
-	chats := m.visibleChats()
-	for i := m.listOffset; i < len(chats) && i < m.listOffset+m.listRows(); i++ {
-		add(m.img.ensureAvatar(chats[i], avatarBigCols, avatarBigRows))
+	for i := m.listOffset; i < m.listLen() && i < m.listOffset+m.listRows(); i++ {
+		if c, _ := m.itemAt(i); c != nil {
+			add(m.img.ensureAvatar(c, avatarBigCols, avatarBigRows))
+		}
 	}
 	if m.screen == screenChat && m.current != nil {
 		add(m.img.ensureAvatar(m.current, avatarSmallCols, avatarSmallRows))
@@ -438,6 +582,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case pictureMsg:
 		return m.applyPicture(msg)
+	case mediaViewMsg:
+		return m.applyMediaView(msg)
+	case chatDeletedMsg:
+		return m.applyChatDeleted(msg)
+	case videoReadyMsg:
+		return m.startVideo(msg)
+	case videoDoneMsg:
+		m.img.reset() // the player drew over the screen
+		m.refreshMessages(false)
+		if msg.err != nil {
+			m.notice, m.noticeErr = "video: "+msg.err.Error(), true
+		}
+		return m, nil
 	case membersMsg:
 		if msg.err != nil {
 			m.members[msg.chat] = []messages.GroupMember{} // don't retry in a loop
@@ -532,6 +689,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.listOffset = 0 // recomputed for the new height, keeping the cursor visible
 		m.resize()
 		m.refreshMessages(false)
 		return m, nil
@@ -544,6 +702,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatListMsg:
 		m.setChats(msg)
+		return m, m.markSeen() // a message that arrived while you watch is read
+
+	case tea.FocusMsg:
+		m.focused = true
+		return m, m.markSeen()
+
+	case tea.BlurMsg:
+		m.focused = false
 		return m, nil
 
 	case screenMsg:
@@ -563,6 +729,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.search != nil && len(msg) < len(m.msgs) {
 			return m, nil // keep the older messages a search loaded
 		}
+		anchor, delta := m.topVisible() // before m.msgs changes
 		m.msgs = append([]messages.Message(nil), msg...)
 		m.sel = len(m.msgs) - 1
 		for i, x := range m.msgs {
@@ -578,7 +745,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		m.refreshMessages(follow)
+		if m.unreadFor == m.current.JID && m.unreadID == "" && len(m.msgs) > 0 {
+			// first load of a chat with unread messages: start at them
+			m.unreadFor = ""
+			if i := firstUnread(m.msgs, m.unreadCount); i >= 0 {
+				m.unreadID = m.msgs[i].Id
+				m.refreshMessages(false)
+				m.scrollToUnread()
+				return m, nil
+			}
+			follow = true // more unread than loaded: start at the newest
+		}
+		if follow {
+			m.refreshMessages(true)
+			return m, nil
+		}
+		// older history arrived above: keep the same messages on screen
+		m.refreshMessages(false)
+		m.restoreTop(anchor, delta)
 		return m, nil
 
 	case newMessageMsg:
@@ -644,6 +828,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	if m.confirm != nil {
+		return m.handleConfirm(msg)
+	}
+	if m.view != nil {
+		return m.handleMediaView(msg)
+	}
 	if m.pic != nil {
 		return m.handlePicture(msg)
 	}
@@ -655,6 +845,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.global != nil {
 		return m.handleGlobalSearch(msg)
+	}
+	// files dragged onto the window arrive as a paste of their paths
+	if msg.Paste && !m.picker && (m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) {
+		if paths, ok := droppedFiles(string(msg.Runes)); ok {
+			if m.screen != screenChat || m.current == nil {
+				m.notice, m.noticeErr = "open a chat first, then drop the files on it", true
+				return m, nil
+			}
+			m.notice, m.noticeErr = fmt.Sprintf("Attaching %d file(s)…", len(paths)), false
+			return m, m.loadAttachments(paths)
+		}
 	}
 	// ctrl+x drops the pasted image, else cancels the reply, in any mode
 	// that shows them (not while typing a command or search).
@@ -733,6 +934,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.search != nil { // like :noh
 			m.search = nil
 			m.refreshMessages(false)
+		} else if m.filter != "" && m.focus == paneList {
+			m.clearFilter()
 		}
 		return m, nil
 	}
@@ -758,10 +961,10 @@ func (m Model) handleListPane(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.moveCursor(-half)
 	case "G":
-		m.cursor = len(m.visibleChats()) - 1
+		m.cursor = m.listLen() - 1
 		m.clampCursor()
 	case "enter", "l", "right":
-		return m, m.openChat(m.selectedChat())
+		return m, m.openSelected()
 	case "A":
 		m.toggleArchive()
 	case "S":
@@ -774,6 +977,8 @@ func (m Model) handleListPane(key string) (tea.Model, tea.Cmd) {
 		return m, m.openInfo(m.selectedChat())
 	case "V":
 		return m, m.openPicture(m.selectedChat())
+	case "d":
+		m.askDeleteChat(m.selectedChat())
 	case "/":
 		m.mode = modeFilter
 		m.cmdline.Prompt = "/"
@@ -786,8 +991,7 @@ func (m Model) handleListPane(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.filter != "" {
-			m.filter = ""
-			m.clampCursor()
+			m.clearFilter()
 			return m, nil
 		}
 		if m.unreadOnly {
@@ -849,6 +1053,10 @@ func (m Model) handleMessagesPane(key string) (tea.Model, tea.Cmd) {
 		return m, m.startSearch()
 	case "S":
 		return m, m.openGlobalSearch()
+	case "@":
+		m.nextMention()
+	case "A":
+		m.openArchiveFromChat()
 	case "n":
 		m.nextMatch(-1)
 	case "N":
@@ -1083,12 +1291,18 @@ func (m Model) handleFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 	case "enter":
+		// stop typing, keep the results: browse them with the usual keys
 		m.mode = modeNormal
 		m.cmdline.Blur()
 		m.cmdline.Prompt = ":"
-		if m.screen == screenList && len(m.visibleChats()) == 1 {
-			return m, m.openChat(m.selectedChat())
-		}
+		m.filter = strings.TrimSpace(m.filter)
+		m.clampCursor()
+		return m, nil
+	case "down", "ctrl+n", "ctrl+j":
+		m.moveCursor(1)
+		return m, nil
+	case "up", "ctrl+p", "ctrl+k":
+		m.moveCursor(-1)
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -1105,4 +1319,86 @@ func (m Model) handleFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// firstUnread finds where the last n incoming messages start.
+func firstUnread(msgs []messages.Message, n int) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if !msgs[i].FromMe {
+			n--
+			if n == 0 {
+				return i
+			}
+		}
+	}
+	return -1 // more unread than loaded: no telling where they start
+}
+
+// topVisible returns the message at the top of the view, and how many lines
+// of it are scrolled past.
+func (m Model) topVisible() (id string, delta int) {
+	y := m.vp.YOffset
+	for _, sp := range m.msgSpans {
+		if sp.idx < len(m.msgs) && sp.start <= y {
+			id, delta = m.msgs[sp.idx].Id, y-sp.start
+		}
+	}
+	return id, delta
+}
+
+// restoreTop scrolls back to the message topVisible returned.
+func (m *Model) restoreTop(id string, delta int) {
+	for _, sp := range m.msgSpans {
+		if sp.idx < len(m.msgs) && m.msgs[sp.idx].Id == id {
+			m.vp.SetYOffset(sp.start + delta)
+			return
+		}
+	}
+}
+
+// scrollToUnread puts the unread divider at the top of the view.
+func (m *Model) scrollToUnread() {
+	for _, sp := range m.msgSpans {
+		if m.msgs[sp.idx].Id == m.unreadID {
+			m.vp.SetYOffset(max(sp.start-2, 0))
+			return
+		}
+	}
+}
+
+// nextMention selects the next older message that mentions you, wrapping.
+func (m *Model) nextMention() {
+	var idx []int
+	for i, msg := range m.msgs {
+		if !msg.FromMe && mentionsYou(msg) {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		m.notice, m.noticeErr = "no messages here mention you", true
+		return
+	}
+	from := len(m.msgs)
+	if m.mode == modeVisual {
+		from = m.sel
+	}
+	next := idx[len(idx)-1] // wrap to the newest
+	for i := len(idx) - 1; i >= 0; i-- {
+		if idx[i] < from {
+			next = idx[i]
+			break
+		}
+	}
+	m.mode, m.sel = modeVisual, next
+	m.refreshMessages(false)
+	m.scrollToSelection()
+}
+
+// openArchiveFromChat shows the archived chats in the sidebar (or goes
+// back to the inbox) from inside a chat.
+func (m *Model) openArchiveFromChat() {
+	if m.mode == modeVisual {
+		m.exitVisual()
+	}
+	m.toggleArchive() // also focuses the list
 }

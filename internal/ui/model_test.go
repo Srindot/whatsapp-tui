@@ -52,8 +52,11 @@ func keys(t *testing.T, m Model, ks ...string) (Model, []tea.Cmd) {
 // run executes cmds (which send to the backend channel) synchronously.
 func run(cmds []tea.Cmd) {
 	for _, c := range cmds {
-		if c != nil {
-			c()
+		if c == nil {
+			continue
+		}
+		if b, ok := c().(tea.BatchMsg); ok {
+			run(b)
 		}
 	}
 }
@@ -79,22 +82,25 @@ func TestNavigation(t *testing.T) {
 		wantFocus  pane
 		wantMode   mode
 	}{
-		{"start", nil, 0, screenList, paneList, modeNormal},
-		{"j moves down", []string{"j"}, 1, screenList, paneList, modeNormal},
-		{"j clamps", []string{"j", "j", "j", "j"}, 2, screenList, paneList, modeNormal},
-		{"k clamps", []string{"k"}, 0, screenList, paneList, modeNormal},
-		{"G bottom", []string{"G"}, 2, screenList, paneList, modeNormal},
+		// item 0 is the "Archived" row; the cursor starts on the newest chat (1)
+		{"start", nil, 1, screenList, paneList, modeNormal},
+		{"j moves down", []string{"j"}, 2, screenList, paneList, modeNormal},
+		{"j clamps", []string{"j", "j", "j", "j"}, 3, screenList, paneList, modeNormal},
+		{"k reaches the archive row", []string{"k"}, 0, screenList, paneList, modeNormal},
+		{"k clamps", []string{"k", "k"}, 0, screenList, paneList, modeNormal},
+		{"G bottom", []string{"G"}, 3, screenList, paneList, modeNormal},
 		{"gg top", []string{"G", "g", "g"}, 0, screenList, paneList, modeNormal},
-		{"enter opens chat", []string{"j", "enter"}, 1, screenChat, paneMessages, modeNormal},
-		{"l opens chat", []string{"l"}, 0, screenChat, paneMessages, modeNormal},
-		{"h focuses sidebar", []string{"enter", "h"}, 0, screenChat, paneList, modeNormal},
-		{"sidebar j/l opens next", []string{"enter", "h", "j", "l"}, 1, screenChat, paneMessages, modeNormal},
-		{"backspace goes back", []string{"enter", "backspace"}, 0, screenList, paneList, modeNormal},
-		{"backspace from sidebar", []string{"enter", "h", "backspace"}, 0, screenList, paneList, modeNormal},
-		{"i enters insert", []string{"enter", "i"}, 0, screenChat, paneMessages, modeInsert},
-		{"esc leaves insert", []string{"enter", "i", "esc"}, 0, screenChat, paneMessages, modeNormal},
-		{"j types in insert", []string{"enter", "i", "j"}, 0, screenChat, paneMessages, modeInsert},
-		{": enters command", []string{":"}, 0, screenList, paneList, modeCommand},
+		{"enter opens chat", []string{"j", "enter"}, 2, screenChat, paneMessages, modeNormal},
+		{"l opens chat", []string{"l"}, 1, screenChat, paneMessages, modeNormal},
+		{"h focuses sidebar", []string{"enter", "h"}, 1, screenChat, paneList, modeNormal},
+		{"sidebar j/l opens next", []string{"enter", "h", "j", "l"}, 2, screenChat, paneMessages, modeNormal},
+		{"backspace goes back", []string{"enter", "backspace"}, 1, screenList, paneList, modeNormal},
+		{"backspace from sidebar", []string{"enter", "h", "backspace"}, 1, screenList, paneList, modeNormal},
+		{"i enters insert", []string{"enter", "i"}, 1, screenChat, paneMessages, modeInsert},
+		{"esc leaves insert", []string{"enter", "i", "esc"}, 1, screenChat, paneMessages, modeNormal},
+		{"j types in insert", []string{"enter", "i", "j"}, 1, screenChat, paneMessages, modeInsert},
+		{": enters command", []string{":"}, 1, screenList, paneList, modeCommand},
+		{"enter on the archive row opens the archive", []string{"k", "enter"}, 0, screenList, paneList, modeNormal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,6 +120,10 @@ func TestOpenChatSelectsAndSends(t *testing.T) {
 	run(cmds)
 	if c := <-ch; c.Name != "select" || c.Params[0] != "222@g.us" {
 		t.Fatalf("got %+v, want select 222@g.us", c)
+	}
+	// it had unread messages: opening it marks them read
+	if c := <-ch; c.Name != "read" || c.Params[0] != "222@g.us" {
+		t.Fatalf("got %+v, want read 222@g.us", c)
 	}
 
 	m, _ = keys(t, m, "i", "h", "e", "y", " ", "y", "o")
@@ -308,5 +318,82 @@ func TestHelpScreenCompleteAndScrolls(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if !next.(Model).showHelp {
 		t.Fatal(":help did not open help")
+	}
+}
+
+func TestFilterFindsContactsAndOpens(t *testing.T) {
+	ch := make(chan messages.Command, 10)
+	chats := []*messages.Conversation{
+		{JID: "919876543210@s.whatsapp.net", Name: "Hari Shankar", LastMsgTime: 300},
+		{JID: "918438018376@s.whatsapp.net", Name: "~ Hari Kumar", LastMsgTime: 0}, // never messaged
+		{JID: "917000000001@s.whatsapp.net", Name: "Harish (old team)", LastMsgTime: 100, IsArchived: true},
+		{JID: "919111111111@s.whatsapp.net", Name: "+91 91111 11111", LastMsgTime: 0},
+		{JID: "919222222222@s.whatsapp.net", Name: "Mom", LastMsgTime: 200},
+	}
+	m := New(ch, chats, Options{SidebarWidth: 38})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+
+	m, _ = keys(t, m, "/", "h", "a", "r", "i")
+	var names []string
+	for _, c := range m.visibleChats() {
+		names = append(names, c.Name)
+	}
+	if got := strings.Join(names, ","); got != "Hari Shankar,~ Hari Kumar,Harish (old team)" {
+		t.Fatalf("results = %s", got)
+	}
+	v := stripANSI(m.View())
+	if !strings.Contains(v, "start a new chat") || !strings.Contains(v, "ctrl+n/p move") {
+		t.Fatalf("contact result not marked:\n%s", v)
+	}
+	// ctrl+n moves while typing; enter keeps the results to browse
+	m, _ = press(t, m, tea.KeyCtrlN)
+	m, _ = press(t, m, tea.KeyEnter)
+	if m.mode != modeNormal || m.filter != "hari" || m.screen != screenList || m.selectedChat().Name != "~ Hari Kumar" {
+		t.Fatalf("after enter: mode %d filter %q screen %d sel %v", m.mode, m.filter, m.screen, m.selectedChat())
+	}
+	if v := stripANSI(m.View()); !strings.Contains(v, "esc clear") {
+		t.Fatalf("no browse hint:\n%s", v)
+	}
+	// normal keys work on the results: j/k, then enter opens
+	m, _ = keys(t, m, "j", "k", "k")
+	if m.selectedChat().Name != "Hari Shankar" {
+		t.Fatalf("j/k: sel %v", m.selectedChat())
+	}
+	m, _ = keys(t, m, "j")
+	m, cmds := keys(t, m, "enter")
+	for _, c := range cmds {
+		if c != nil {
+			c()
+		}
+	}
+	if c := <-ch; c.Name != "select" || c.Params[0] != "918438018376@s.whatsapp.net" {
+		t.Fatalf("opened %+v", c)
+	}
+	if m.screen != screenChat || m.current.Name != "~ Hari Kumar" || m.filter != "hari" {
+		t.Fatalf("after open: screen %d current %v filter %q", m.screen, m.current, m.filter)
+	}
+	// the results stay in the sidebar: back, next result, open
+	m, _ = keys(t, m, "backspace", "j", "enter")
+	if m.current.Name != "Harish (old team)" {
+		t.Fatalf("second result: %v", m.current)
+	}
+	// back in the list, esc clears the search
+	m, _ = keys(t, m, "backspace", "esc")
+	if m.filter != "" || len(m.visibleChats()) != 2 {
+		t.Fatalf("esc: filter %q, %d chats", m.filter, len(m.visibleChats()))
+	}
+
+	// by phone number
+	m, _ = keys(t, m, "/")
+	for _, r := range "91111" {
+		m, _ = keys(t, m, string(r))
+	}
+	if v := m.visibleChats(); len(v) != 1 || v[0].JID != "919111111111@s.whatsapp.net" {
+		t.Fatalf("number search = %v", v)
+	}
+	m, _ = press(t, m, tea.KeyEsc)
+	if m.filter != "" || m.mode != modeNormal {
+		t.Fatal("esc should cancel the search")
 	}
 }

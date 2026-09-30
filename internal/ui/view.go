@@ -59,6 +59,7 @@ func (m *Model) refreshMessages(gotoBottom bool) {
 	content, spans := m.renderMessages(m.rightWidth())
 	m.vp.SetContent(content)
 	m.msgSpans = spans
+	m.msgLines = strings.Split(content, "\n")
 	if gotoBottom {
 		m.vp.GotoBottom()
 	}
@@ -176,6 +177,8 @@ func (m Model) renderQR(width, height int) string {
 func (m Model) renderStatusLine() string {
 	var badge string
 	switch {
+	case m.view != nil:
+		badge = styleModeVisual.Render("VIEW")
 	case m.stk != nil:
 		badge = styleModeVisual.Render("STICKERS")
 	case m.fwd != nil:
@@ -221,10 +224,12 @@ func (m Model) statusLineWith(badge string) string {
 }
 
 // visualHint lists the visual-mode actions.
-const visualHint = "r reply · p private · e react · f forward · y copy · d download · o open · R retry · esc done"
+const visualHint = "r reply · p private · e react · f forward · space view · y copy · s save · d delete · o open · esc"
 
 func (m Model) renderCommandLine() string {
 	switch {
+	case m.confirm != nil:
+		return m.renderConfirm()
 	case m.stk != nil && m.notice == "":
 		hint := "hjkl move · tab stickers/GIFs · enter send · n new from a file · esc close"
 		if m.stk.tab == tabStickers {
@@ -281,6 +286,8 @@ func (m Model) View() string {
 	switch {
 	case m.showHelp:
 		main = m.renderHelp(m.width, h)
+	case m.view != nil:
+		main = m.renderMediaView(m.width, h)
 	case m.pic != nil:
 		main = m.renderPicture(m.width, h)
 	case m.stk != nil:

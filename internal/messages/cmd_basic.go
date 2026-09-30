@@ -10,22 +10,20 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-// cmdRead marks the current chat as read by sending read receipts.
+// cmdRead marks a chat as read: the given one (the UI sends that when you
+// look at a chat) or the current one (:read).
 func cmdRead(sm *SessionManager, client *whatsmeow.Client, cmdName string, params []string) {
+	if checkParam(params, 1) {
+		go sm.markChatAsRead(params[0])
+		return
+	}
 	sm.mu.RLock()
 	receiver := sm.currentReceiver
 	sm.mu.RUnlock()
-
 	if receiver == "" {
 		sm.printCommandUsage(cmdName, "-> only works in a chat")
 		return
 	}
-
-	if client == nil || !client.IsConnected() {
-		sm.uiHandler.PrintError(errors.New("not connected"))
-		return
-	}
-
 	sm.markChatAsRead(receiver)
 	sm.uiHandler.PrintText("Marked chat as read")
 }

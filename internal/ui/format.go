@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 )
 
 // WhatsApp's text formatting: *bold*, _italic_, ~strike~, `code`,
@@ -31,6 +32,7 @@ const (
 type span struct {
 	text  string
 	style textStyle
+	url   string // links: the full address, kept on every wrapped piece
 }
 
 var inlineMarkers = map[byte]textStyle{'*': fmtBold, '_': fmtItalic, '~': fmtStrike}
@@ -43,15 +45,15 @@ func isEdge(r rune) bool {
 // parseInline splits one line into styled spans.
 func parseInline(s string) []span {
 	var out []span
-	add := func(text string, st textStyle) {
+	add := func(text string, st textStyle, url string) {
 		if text == "" {
 			return
 		}
-		if n := len(out); n > 0 && out[n-1].style == st {
+		if n := len(out); n > 0 && out[n-1].style == st && out[n-1].url == url {
 			out[n-1].text += text
 			return
 		}
-		out = append(out, span{text, st})
+		out = append(out, span{text, st, url})
 	}
 	var walk func(s string, st textStyle)
 	walk = func(s string, st textStyle) {
@@ -61,7 +63,7 @@ func parseInline(s string) []span {
 			if strings.HasPrefix(s[i:], "```") {
 				if j := strings.Index(s[i+3:], "```"); j > 0 {
 					walkLinks(s[plainStart:i], st, add)
-					add(s[i+3:i+3+j], st|fmtCode)
+					add(s[i+3:i+3+j], st|fmtCode, "")
 					i += 6 + j
 					plainStart = i
 					continue
@@ -71,7 +73,7 @@ func parseInline(s string) []span {
 			if c == '`' {
 				if j := strings.IndexByte(s[i+1:], '`'); j > 0 {
 					walkLinks(s[plainStart:i], st, add)
-					add(s[i+1:i+1+j], st|fmtCode)
+					add(s[i+1:i+1+j], st|fmtCode, "")
 					i += 2 + j
 					plainStart = i
 					continue
@@ -138,7 +140,7 @@ var (
 )
 
 // walkLinks adds plain text, marking links and @mentions.
-func walkLinks(s string, st textStyle, add func(string, textStyle)) {
+func walkLinks(s string, st textStyle, add func(string, textStyle, string)) {
 	for s != "" {
 		loc := linkRe.FindStringIndex(s)
 		mloc := mentionRe.FindStringIndex(s)
@@ -147,11 +149,18 @@ func walkLinks(s string, st textStyle, add func(string, textStyle)) {
 			loc, style = mloc, fmtMention
 		}
 		if loc == nil {
-			add(s, st)
+			add(s, st, "")
 			return
 		}
-		add(s[:loc[0]], st)
-		add(s[loc[0]:loc[1]], st|style)
+		add(s[:loc[0]], st, "")
+		match, url := s[loc[0]:loc[1]], ""
+		if style == fmtLink {
+			url = match
+			if !strings.Contains(strings.ToLower(url), "://") {
+				url = "https://" + url // www.example.com
+			}
+		}
+		add(match, st|style, url)
 		s = s[loc[1]:]
 	}
 }
@@ -217,13 +226,14 @@ func wrapSpans(spans []span, width int, base lipgloss.Style) []string {
 			isSpace := strings.TrimSpace(tok) == ""
 			n := len(words)
 			if n > 0 && !isSpace && !words[n-1].space {
-				words[n-1].pieces = append(words[n-1].pieces, span{tok, sp.style})
+				words[n-1].pieces = append(words[n-1].pieces, span{tok, sp.style, sp.url})
 				words[n-1].w += ansi.StringWidth(tok)
 				continue
 			}
-			words = append(words, word{pieces: []span{{tok, sp.style}}, w: ansi.StringWidth(tok), space: isSpace})
+			words = append(words, word{pieces: []span{{tok, sp.style, sp.url}}, w: ansi.StringWidth(tok), space: isSpace})
 		}
 	}
+	width = max(width, 1)
 	var lines []string
 	var cur strings.Builder
 	curW := 0
@@ -232,7 +242,14 @@ func wrapSpans(spans []span, width int, base lipgloss.Style) []string {
 		cur.Reset()
 		curW = 0
 	}
-	render := func(p span) string { return spanStyle(base, p.style).Render(p.text) }
+	render := func(p span) string {
+		out := spanStyle(base, p.style).Render(p.text)
+		if p.url != "" {
+			// OSC 8 hyperlink: each wrapped piece opens the whole link
+			out = "\x1b]8;;" + p.url + "\x1b\\" + out + "\x1b]8;;\x1b\\"
+		}
+		return out
+	}
 	for _, w := range words {
 		if w.space {
 			if curW > 0 && curW+w.w <= width {
@@ -252,15 +269,19 @@ func wrapSpans(spans []span, width int, base lipgloss.Style) []string {
 			text := p.text
 			for ansi.StringWidth(text) > width-curW {
 				head := ansi.Truncate(text, width-curW, "")
-				if head == "" { // not even one character fits: next line
-					flush()
-					continue
+				if head == "" {
+					if curW > 0 { // not even one character fits: next line
+						flush()
+						continue
+					}
+					// a wide character in a too-narrow line: put it there anyway
+					head, _, _, _ = uniseg.FirstGraphemeClusterInString(text, -1)
 				}
-				cur.WriteString(render(span{head, p.style}))
+				cur.WriteString(render(span{head, p.style, p.url}))
 				flush()
 				text = text[len(head):]
 			}
-			cur.WriteString(render(span{text, p.style}))
+			cur.WriteString(render(span{text, p.style, p.url}))
 			curW += ansi.StringWidth(text)
 		}
 	}

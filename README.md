@@ -12,7 +12,7 @@ compiler** (for SQLite).
 ```bash
 git clone https://github.com/Srindot/whatsapp-tui
 cd whatsapp-tui
-make install            # builds and copies it to ~/.local/bin
+make install            # installs to ~/.local/bin + a launcher entry (rofi, app menus)
 whatsapp-tui            # scan the QR code: WhatsApp → Settings → Linked devices
 ```
 
@@ -28,17 +28,18 @@ isn't). For all users: `sudo make install PREFIX=/usr/local`. Or
 | [kitty](https://sw.kovidgoyal.net/kitty/) (or another kitty-graphics terminal) | sharp images, animations, profile pictures | recommended; other terminals get block-character images |
 | [yazi](https://yazi-rs.github.io) | attaching files (`a`) | optional |
 | ffmpeg | making stickers/GIFs, playing GIFs | optional |
+| mpv | playing videos (`space` in visual mode) | optional; otherwise your default player |
 | wl-clipboard | clipboard on Wayland (X11 works without it) | optional |
 
 **Debian / Ubuntu**
 ```bash
-sudo apt install golang gcc ffmpeg wl-clipboard
+sudo apt install golang gcc ffmpeg mpv wl-clipboard
 # yazi: https://yazi-rs.github.io/docs/installation
 ```
 
 **Arch**
 ```bash
-sudo pacman -S go gcc ffmpeg yazi wl-clipboard
+sudo pacman -S go gcc ffmpeg mpv yazi wl-clipboard
 ```
 
 **Fedora**
@@ -49,7 +50,7 @@ sudo dnf install golang gcc ffmpeg-free wl-clipboard   # yazi: see its docs
 **macOS**
 ```bash
 xcode-select --install          # C compiler
-brew install go ffmpeg yazi
+brew install go ffmpeg mpv yazi
 ```
 Pasting images from the clipboard isn't supported on macOS yet.
 
@@ -60,7 +61,7 @@ characters outside kitty). Native Windows is untested.
 
 The full guide is in [USAGE.md](USAGE.md); press `?` in the app for every key. The basics: `j`/`k` move, `enter` opens a
 chat, `i` writes, `esc` goes back to normal mode, `v` selects messages
-(`r` reply, `e` react, `f` forward, `y` copy, `d` download), `/` searches,
+(`r` reply, `e` react, `f` forward, `y` copy, `s` save, `d` delete), `/` searches,
 `S` searches all chats, `:q` quits.
 
 **kitty:** so `shift+enter` makes a new line and `ctrl+v` pastes images, add

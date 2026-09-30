@@ -76,6 +76,7 @@ func (sm *SessionManager) Init(handler UiMessageHandler) error {
 	}
 
 	sm.uiHandler = handler
+	sm.quietSignalLogs()
 	sm.BatteryChannel = make(chan BatteryMsg, 10)
 	sm.StatusChannel = make(chan StatusMsg, 10)
 	sm.CommandChannel = make(chan Command, 10)

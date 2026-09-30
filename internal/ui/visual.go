@@ -152,6 +152,8 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.exitVisual()
 	case "/":
 		return m, m.startSearch()
+	case "@":
+		m.nextMention()
 	case "n":
 		m.nextMatch(-1)
 	case "N":
@@ -184,10 +186,14 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openForward(sel)
 	case "y":
 		return m, m.copyMessage(sel)
-	case "d":
+	case "s":
 		return m, m.downloadMessage(sel)
+	case "d":
+		m.askDeleteMessage(sel)
 	case "o":
 		return m, m.openMessage(sel)
+	case " ", "space":
+		return m, m.viewMedia(sel)
 	case "R":
 		if !sel.FromMe || sel.Status != messages.StatusFailed {
 			m.notice, m.noticeErr = "only messages that failed to send can be retried", true
@@ -389,9 +395,25 @@ func (m Model) downloadMessage(sel messages.Message) tea.Cmd {
 	})
 }
 
+// openURL is how links are opened (swappable for tests).
+var openURL = open.Start
+
 func (m Model) openMessage(sel messages.Message) tea.Cmd {
 	if len(sel.Media) == 0 {
-		return func() tea.Msg { return actionDoneMsg{err: errors.New("nothing to open")} }
+		// no media: open the message's first link instead
+		loc := linkRe.FindStringIndex(sel.Text)
+		if loc == nil {
+			return func() tea.Msg { return actionDoneMsg{err: errors.New("nothing to open")} }
+		}
+		url := sel.Text[loc[0]:loc[1]]
+		if !strings.Contains(strings.ToLower(url), "://") {
+			url = "https://" + url
+		}
+		label := "Opened " + url
+		if n := len(linkRe.FindAllStringIndex(sel.Text, -1)); n > 1 {
+			label = fmt.Sprintf("Opened the first of %d links", n)
+		}
+		return func() tea.Msg { return actionDoneMsg{ok: label, err: openURL(url)} }
 	}
 	a := m.actions
 	return m.action("Opened in the default app", func(ctx context.Context) (string, error) {

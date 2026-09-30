@@ -46,6 +46,7 @@ func (md *MessageDatabase) InitWithDB(db *sql.DB) error {
 	// Backward-compatible migration: add is_archived column for existing databases.
 	// SQLite ignores the ALTER if the column already exists when using this pattern.
 	md.db.Exec(`ALTER TABLE conversations ADD COLUMN is_archived BOOLEAN DEFAULT 0`)
+	md.db.Exec(`ALTER TABLE conversations ADD COLUMN mentioned BOOLEAN DEFAULT 0`)
 
 	_, err = md.db.Exec(`
 	CREATE TABLE IF NOT EXISTS messages (
@@ -146,22 +147,23 @@ func (md *MessageDatabase) AddMessage(msg Message) error {
 // UpsertConversation updates or inserts a conversation
 func (md *MessageDatabase) UpsertConversation(c Conversation) error {
 	_, err := md.db.Exec(`
-	INSERT INTO conversations (jid, name, last_msg_time, preview, unread, is_pinned, is_archived)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO conversations (jid, name, last_msg_time, preview, unread, is_pinned, is_archived, mentioned)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
 		name=excluded.name,
 		last_msg_time=excluded.last_msg_time,
 		preview=excluded.preview,
 		unread=excluded.unread,
 		is_pinned=excluded.is_pinned,
-		is_archived=excluded.is_archived;
-	`, c.JID, c.Name, c.LastMsgTime, c.Preview, c.Unread, c.IsPinned, c.IsArchived)
+		is_archived=excluded.is_archived,
+		mentioned=excluded.mentioned;
+	`, c.JID, c.Name, c.LastMsgTime, c.Preview, c.Unread, c.IsPinned, c.IsArchived, c.Mentioned)
 	return err
 }
 
 // GetConversations retrieves all conversations from the DB
 func (md *MessageDatabase) GetConversations() ([]Conversation, error) {
-	rows, err := md.db.Query("SELECT jid, name, last_msg_time, preview, unread, is_pinned, is_archived FROM conversations")
+	rows, err := md.db.Query("SELECT jid, name, last_msg_time, preview, unread, is_pinned, is_archived, COALESCE(mentioned, 0) FROM conversations")
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func (md *MessageDatabase) GetConversations() ([]Conversation, error) {
 	var convs []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.JID, &c.Name, &c.LastMsgTime, &c.Preview, &c.Unread, &c.IsPinned, &c.IsArchived); err != nil {
+		if err := rows.Scan(&c.JID, &c.Name, &c.LastMsgTime, &c.Preview, &c.Unread, &c.IsPinned, &c.IsArchived, &c.Mentioned); err != nil {
 			return nil, err
 		}
 		convs = append(convs, c)
@@ -490,4 +492,51 @@ func (md *MessageDatabase) GetRecentMedia(mediaType string, limit int) ([]Messag
 	}
 	defer rows.Close()
 	return collectMessages(rows)
+}
+
+// DeleteMessage removes one message (and its reactions).
+func (md *MessageDatabase) DeleteMessage(id string) error {
+	if md.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	if _, err := md.db.Exec(`DELETE FROM messages WHERE id = ?`, id); err != nil {
+		return err
+	}
+	_, err := md.db.Exec(`DELETE FROM reactions WHERE msg_id = ?`, id)
+	return err
+}
+
+// MarkRevoked replaces a message deleted for everyone with a note.
+func (md *MessageDatabase) MarkRevoked(id, note string) error {
+	if md.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	_, err := md.db.Exec(`UPDATE messages SET text = ?, media_type = '', media = NULL,
+		quoted_id = '', quoted_sender = '', quoted_text = '' WHERE id = ?`, note, id)
+	if err == nil {
+		_, err = md.db.Exec(`DELETE FROM reactions WHERE msg_id = ?`, id)
+	}
+	return err
+}
+
+// DeleteChat removes a chat and all its messages.
+func (md *MessageDatabase) DeleteChat(chat string) error {
+	if md.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	tx, err := md.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM reactions WHERE msg_id IN (SELECT id FROM messages WHERE chat_id = ?)`,
+		`DELETE FROM messages WHERE chat_id = ?`,
+		`DELETE FROM conversations WHERE jid = ?`,
+	} {
+		if _, err := tx.Exec(q, chat); err != nil {
+			return fmt.Errorf("delete chat: %w", err)
+		}
+	}
+	return tx.Commit()
 }

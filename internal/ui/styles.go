@@ -84,6 +84,7 @@ var (
 	styleModeCmd, styleModeSearch               lipgloss.Style
 	styleModeVisual                             lipgloss.Style
 	styleStatusBar, styleSelected               lipgloss.Style
+	styleMentionBadge, styleMention             lipgloss.Style
 )
 
 // ApplyTheme sets the active palette by config name and rebuilds all styles.
@@ -137,6 +138,9 @@ func ApplyTheme(name string) {
 	styleModeVisual = mode(p.Iris)
 	styleStatusBar = fg(p.Subtle).Background(colorBarBg)
 	styleSelected = lipgloss.NewStyle().Background(colorSelBg)
+	// messages that mention you: love, distinct from gold unread and rose selection
+	styleMentionBadge = mode(p.Love)
+	styleMention = fg(p.Love).Bold(true)
 }
 
 func senderColor(id string) lipgloss.Color {
