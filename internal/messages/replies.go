@@ -154,6 +154,7 @@ func (sm *SessionManager) SendReply(ctx context.Context, chat, text string, quot
 	if err != nil {
 		return err
 	}
+	mentions = sm.expandMentions(ctx, chat, text, mentions)
 	ci := &waE2E.ContextInfo{
 		StanzaID:      proto.String(quoted.Id),
 		Participant:   proto.String(author.String()),

@@ -96,9 +96,12 @@ func TestNavigation(t *testing.T) {
 		{"sidebar j/l opens next", []string{"enter", "h", "j", "l"}, 2, screenChat, paneMessages, modeNormal},
 		{"backspace goes back", []string{"enter", "backspace"}, 1, screenList, paneList, modeNormal},
 		{"backspace from sidebar", []string{"enter", "h", "backspace"}, 1, screenList, paneList, modeNormal},
-		{"i enters insert", []string{"enter", "i"}, 1, screenChat, paneMessages, modeInsert},
-		{"esc leaves insert", []string{"enter", "i", "esc"}, 1, screenChat, paneMessages, modeNormal},
-		{"j types in insert", []string{"enter", "i", "j"}, 1, screenChat, paneMessages, modeInsert},
+		{"R focuses the box", []string{"enter", "R"}, 1, screenChat, paneMessages, modeText},
+		{"R then i types", []string{"enter", "R", "i"}, 1, screenChat, paneMessages, modeInsert},
+		{"i alone doesn't type", []string{"enter", "i"}, 1, screenChat, paneMessages, modeNormal},
+		{"esc: insert to box", []string{"enter", "R", "i", "esc"}, 1, screenChat, paneMessages, modeText},
+		{"esc esc leaves the box", []string{"enter", "R", "i", "esc", "esc"}, 1, screenChat, paneMessages, modeNormal},
+		{"j types in insert", []string{"enter", "R", "i", "j"}, 1, screenChat, paneMessages, modeInsert},
 		{": enters command", []string{":"}, 1, screenList, paneList, modeCommand},
 		{"enter on the archive row opens the archive", []string{"k", "enter"}, 0, screenList, paneList, modeNormal},
 	}
@@ -126,7 +129,7 @@ func TestOpenChatSelectsAndSends(t *testing.T) {
 		t.Fatalf("got %+v, want read 222@g.us", c)
 	}
 
-	m, _ = keys(t, m, "i", "h", "e", "y", " ", "y", "o")
+	m, _ = keys(t, m, "R", "i", "h", "e", "y", " ", "y", "o")
 	m, cmds = keys(t, m, "enter")
 	run(cmds)
 	c := <-ch

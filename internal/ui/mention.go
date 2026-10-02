@@ -187,6 +187,9 @@ func (m Model) renderMentionPicker(width int) string {
 			marker = paint(styleAccent, sel).Render("▌ ")
 		}
 		name := paint(senderStyle(mem.JID), sel).Render("@" + mem.Name)
+		if mem.JID == messages.MentionAll {
+			name = paint(styleAccent.Bold(true), sel).Render("@all") + paint(styleMuted, sel).Render("  everyone in the group")
+		}
 		lines = append(lines, fitRow(marker+name, fill.Render(" "), width, fill))
 	}
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).MaxHeight(m.mentionPickerRows()).

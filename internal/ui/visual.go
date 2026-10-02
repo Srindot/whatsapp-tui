@@ -69,9 +69,41 @@ func (m *Model) enterVisual() {
 		return
 	}
 	m.mode = modeVisual
-	m.sel = len(m.msgs) - 1
+	m.sel = m.lowestVisible()
+	y := m.vp.YOffset
 	m.refreshMessages(false)
+	m.vp.SetYOffset(y) // stay where you scrolled to
 	m.scrollToSelection()
+}
+
+// lowestVisible is the message to start visual mode on: the newest when
+// you're at the bottom, else the lowest one fully on screen (or, if none
+// fits, the one at the bottom edge).
+func (m Model) lowestVisible() int {
+	newest := len(m.msgs) - 1
+	if m.vp.AtBottom() || len(m.msgSpans) == 0 {
+		return newest
+	}
+	top, bottom := m.vp.YOffset, m.vp.YOffset+m.vp.Height-1
+	full, edge := -1, -1
+	for _, sp := range m.msgSpans {
+		if sp.idx > newest {
+			continue
+		}
+		if sp.start >= top && sp.end <= bottom {
+			full = sp.idx
+		}
+		if sp.start <= bottom && sp.end >= top {
+			edge = sp.idx
+		}
+	}
+	switch {
+	case full >= 0:
+		return full
+	case edge >= 0:
+		return edge
+	}
+	return newest
 }
 
 func (m *Model) exitVisual() {
@@ -139,7 +171,7 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "g" {
 			m.sel = 0
 			m.refreshMessages(false)
-			m.scrollToSelection()
+			m.vp.GotoTop() // including the date line above it
 			return m, nil
 		}
 	}
@@ -169,6 +201,7 @@ func (m Model) handleVisual(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(-5)
 	case "G":
 		m.moveSelection(len(m.msgs))
+		m.vp.GotoBottom()
 	case "g":
 		m.pendingG = true
 	case "enter":
@@ -315,13 +348,30 @@ func (m Model) startEdit(sel messages.Message) (tea.Model, tea.Cmd) {
 	m.editing = &sel
 	m.replyTo = nil
 	m.attachments = nil
-	// mentions show as @Name, as when writing (they're sent as @number)
-	text, chosen := sel.Text, []chosenMention(nil)
-	for user, name := range sel.Mentions {
-		if strings.Contains(text, "@"+user) {
-			text = strings.ReplaceAll(text, "@"+user, "@"+name)
-			chosen = append(chosen, chosenMention{name: name, jid: user})
+	// mentions show as @Name, as when writing (they're sent as @number);
+	// names from the message, else from the group's member list
+	names := map[string]string{}
+	if m.current != nil {
+		for _, mem := range m.members[m.current.JID] {
+			names[strings.Split(mem.JID, "@")[0]] = mem.Name
 		}
+	}
+	for user, name := range sel.Mentions {
+		names[user] = name
+	}
+	text, chosen := sel.Text, []chosenMention(nil)
+	for _, match := range mentionRe.FindAllString(sel.Text, -1) {
+		user := strings.TrimPrefix(match, "@")
+		if user == messages.MentionAll {
+			chosen = append(chosen, chosenMention{name: user, jid: user})
+			continue
+		}
+		name, ok := names[user]
+		if !ok || name == "" || name == "You" {
+			continue // unknown: keep the number, it's still sent as a mention
+		}
+		text = strings.ReplaceAll(text, match, "@"+name)
+		chosen = append(chosen, chosenMention{name: name, jid: user})
 	}
 	m.chosen, m.mention = chosen, nil
 	m.compose.SetValue(text)

@@ -48,7 +48,7 @@ func mentionModel(t *testing.T, chat string) (Model, *fakeMentioner, chan messag
 	m.compose.Cursor.SetMode(cursor.CursorStatic) // no blink ticks for drain to wait on
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = next.(Model)
-	m, _ = keys(t, m, "enter", "i")
+	m, _ = keys(t, m, "enter", "R", "i")
 	return m, fm, ch
 }
 

@@ -52,7 +52,7 @@ func (sm *SessionManager) EditMessage(ctx context.Context, m Message, text strin
 	if err != nil {
 		return fmt.Errorf("invalid chat: %w", err)
 	}
-	mentions = sm.completeMentions(ctx, m.ChatId, mentions)
+	mentions = sm.expandMentions(ctx, m.ChatId, text, sm.completeMentions(ctx, m.ChatId, mentions))
 	content := &waE2E.Message{Conversation: proto.String(text)}
 	if len(mentions) > 0 {
 		content = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
@@ -77,7 +77,7 @@ func (sm *SessionManager) completeMentions(ctx context.Context, chat string, men
 	var members []GroupMember
 	out := make([]string, 0, len(mentions))
 	for _, m := range mentions {
-		if strings.Contains(m, "@") {
+		if strings.Contains(m, "@") || m == MentionAll {
 			out = append(out, m)
 			continue
 		}

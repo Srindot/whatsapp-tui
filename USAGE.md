@@ -61,7 +61,11 @@ the wheel.
 
 ## Writing
 
-`i` starts typing, `enter` sends, `esc` goes back to normal mode.
+`R` (or `enter`) puts you in the input box, vim-style: `i` types at the
+cursor, `a` after it, `I` / `A` at the start / end of the line, `o` on a new
+line. `esc` goes back to the box's normal mode (TEXT), where `h` `l` `w` `b`
+`0` `$` move, `x` / `D` / `dd` delete and `enter` sends; `esc` again leaves
+the box. `ctrl+a` attaches files in either mode.
 
 - **New line:** `shift+enter` in kitty (see [kitty setup](#kitty-setup)), or
   `alt+enter` / `ctrl+j` anywhere.
@@ -69,12 +73,16 @@ the wheel.
   `` `code` ``, `> quote`, `- lists`.
 - **Mentions:** in a group, type `@` and a member list pops up; `tab` picks,
   `ctrl+n`/`ctrl+p` move. The person gets notified.
+- **@all** mentions everyone in the group (it's first in the list, or just
+  type `@all`). Like on the phone, groups over 32 members allow it only for
+  admins.
 - **Mentions of you** stand out in red ("@ mentioned you"), chats with one show
   a red `@` badge, and `@` (in normal or visual mode) jumps between them.
 
 ## Acting on messages (visual mode)
 
-Press `v`: the newest message is selected. Move with `j` `k` (`gg` `G`), then:
+Press `v`: the message you're looking at is selected (the newest one when
+you're at the bottom). Move with `j` `k`, `gg` (oldest) and `G` (newest), then:
 
 | Key | |
 |---|---|

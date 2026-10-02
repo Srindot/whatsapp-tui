@@ -144,6 +144,9 @@ func (m Model) renderChatPane(width, height int) string {
 // its middle line.
 func (m Model) renderCompose(width int) string {
 	border := pal.Muted
+	if m.mode == modeText {
+		border = pal.Rose // focused, not typing
+	}
 	if m.mode == modeInsert {
 		border = colorWarm
 	}
@@ -159,7 +162,7 @@ func (m Model) renderMessages(width int) (string, []msgSpan) {
 	}
 	if len(m.msgs) == 0 {
 		return "\n" + styleDim.PaddingLeft(2).Width(width).Render(
-			"No messages yet. Fetching recent history from your phone… (press i to write one)"), nil
+			"No messages yet. Fetching recent history from your phone… (press R, then i to write one)"), nil
 	}
 	group := isGroup(m.current.JID)
 	now := time.Now()

@@ -8,6 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/Srindot/whatsapp-tui/internal/messages"
 	"github.com/rivo/uniseg"
 )
 
@@ -136,7 +138,7 @@ func closerFor(s string, i int) int {
 
 var (
 	linkRe    = regexp.MustCompile(`(?i)\b(?:https?://|www\.)[^\s<>"]+[^\s<>".,;:!?)\]}'"]`)
-	mentionRe = regexp.MustCompile(`@\d{5,}`)
+	mentionRe = regexp.MustCompile(`@(?:\d{5,}|all\b)`)
 )
 
 // walkLinks adds plain text, marking links and @mentions.
@@ -200,6 +202,13 @@ func withMentions(spans []span, names map[string]string) []span {
 	}
 	for i, sp := range spans {
 		if sp.style&fmtMention == 0 {
+			continue
+		}
+		if sp.text == "@"+messages.MentionAll {
+			// "@all" stays as written; it's a mention of you when someone else sent it
+			if names[messages.MentionAll] == "You" {
+				spans[i].style = sp.style&^fmtMention | fmtMentionYou
+			}
 			continue
 		}
 		if name, ok := names[strings.TrimPrefix(sp.text, "@")]; ok {

@@ -194,6 +194,8 @@ func (m Model) modeBadge() string {
 	switch m.mode {
 	case modeInsert:
 		badge = styleModeInsert.Render("INSERT")
+	case modeText:
+		badge = styleModeNormal.Render("TEXT")
 	case modeCommand:
 		badge = styleModeCmd.Render("COMMAND")
 	case modeFilter:
@@ -224,7 +226,7 @@ func (m Model) statusLineWith(badge string) string {
 }
 
 // visualHint lists the visual-mode actions.
-const visualHint = "enter reply · p private · r react · e edit · f forward · space view · y copy · s save · d delete · o open · esc"
+const visualHint = "j/k gg/G move · enter reply · p private · r react · e edit · f forward · space view · y copy · s save · d delete · o open · esc"
 
 func (m Model) renderCommandLine() string {
 	switch {
@@ -260,6 +262,8 @@ func (m Model) renderCommandLine() string {
 		return m.renderPicker()
 	case m.mode == modeVisual && m.notice == "":
 		return styleDim.Render(ansi.Truncate(visualHint, m.width, "…"))
+	case m.mode == modeText && m.notice == "":
+		return styleDim.Render(ansi.Truncate(textHint, m.width, "…"))
 	case m.notice != "" && m.noticeErr:
 		return styleErr.Render(ansi.Truncate(m.notice, m.width, "…"))
 	case m.notice != "":

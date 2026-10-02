@@ -281,7 +281,7 @@ func TestNewlineInCompose(t *testing.T) {
 	m := visualModel(t, &fakeActions{}, fakeClip{})
 	ch := make(chan messages.Command, 5)
 	m.commands = ch
-	m, _ = keys(t, m, "i", "a")
+	m, _ = keys(t, m, "R", "i", "a")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
 	m = next.(Model)
 	m, _ = keys(t, m, "b")
@@ -354,9 +354,10 @@ func TestCtrlXCancelsReplyInAnyMode(t *testing.T) {
 		mode mode
 	}{
 		{"insert", nil, modeInsert},
-		{"normal", []string{"esc"}, modeNormal},
-		{"visual", []string{"esc", "v"}, modeVisual},
-		{"sidebar", []string{"esc", "h"}, modeNormal},
+		{"box", []string{"esc"}, modeText},
+		{"normal", []string{"esc", "esc"}, modeNormal},
+		{"visual", []string{"esc", "esc", "v"}, modeVisual},
+		{"sidebar", []string{"esc", "esc", "h"}, modeNormal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := visualModel(t, &fakeActions{}, fakeClip{})

@@ -27,7 +27,7 @@ func editModel(t *testing.T, a *fakeActions) Model {
 func TestEditOwnMessage(t *testing.T) {
 	a := &fakeActions{}
 	m := editModel(t, a)
-	m, _ = keys(t, m, "i", "d", "r", "a", "f", "t", "esc") // something half-typed
+	m, _ = keys(t, m, "R", "i", "d", "r", "a", "f", "t", "esc", "esc") // something half-typed
 	m, _ = keys(t, m, "v", "e")
 	if m.mode != modeInsert || m.editing == nil || m.editing.Id != "m3" {
 		t.Fatalf("mode %d editing %v", m.mode, m.editing)
@@ -56,6 +56,10 @@ func TestEditCancel(t *testing.T) {
 	a := &fakeActions{}
 	m := editModel(t, a)
 	m, _ = keys(t, m, "v", "e", "x", "y", "z", "esc")
+	if m.editing == nil || m.mode != modeText {
+		t.Fatalf("one esc: still editing, in the box (editing %v, mode %d)", m.editing, m.mode)
+	}
+	m, _ = keys(t, m, "esc") // leaving the box drops the edit
 	if m.editing != nil || m.compose.Value() != "" || m.mode != modeNormal {
 		t.Fatalf("esc: editing %v compose %q mode %d", m.editing, m.compose.Value(), m.mode)
 	}

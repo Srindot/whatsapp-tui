@@ -39,6 +39,7 @@ type mode int
 const (
 	modeNormal mode = iota
 	modeInsert
+	modeText // the input box has focus in vim normal mode (R): i/a type, h/l move
 	modeCommand
 	modeFilter
 	modeVisual       // a message is selected for actions
@@ -57,6 +58,7 @@ type Model struct {
 	focus         pane
 	mode          mode
 	pendingG      bool // first "g" of "gg" was pressed
+	pendingD      bool // first "d" of "dd" in the input box
 	showHelp      bool
 	helpScroll    int
 
@@ -170,7 +172,7 @@ type privacyMsg struct {
 	err         error
 }
 
-const composePlaceholder = "press i to type a message"
+const composePlaceholder = "press R, then i to type a message"
 
 // New creates the UI model. Commands for the backend are sent on commands;
 // initial seeds the chat list with cached conversations.
@@ -850,7 +852,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleGlobalSearch(msg)
 	}
 	// files dragged onto the window arrive as a paste of their paths
-	if msg.Paste && !m.picker && (m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) {
+	if msg.Paste && !m.picker && (m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert || m.mode == modeText) {
 		if paths, ok := droppedFiles(string(msg.Runes)); ok {
 			if m.screen != screenChat || m.current == nil {
 				m.notice, m.noticeErr = "open a chat first, then drop the files on it", true
@@ -863,7 +865,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+x drops the pasted image, else cancels the reply, in any mode
 	// that shows them (not while typing a command or search).
 	if key == "ctrl+x" && (len(m.attachments) > 0 || m.replyTo != nil || m.editing != nil) &&
-		(m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) && !m.picker {
+		(m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert || m.mode == modeText) && !m.picker {
 		switch {
 		case m.editing != nil:
 			m.cancelEdit()
@@ -877,6 +879,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeInsert:
 		return m.handleInsert(msg)
+	case modeText:
+		return m.handleText(msg)
 	case modeCommand:
 		return m.handleCommand(msg)
 	case modeFilter:
@@ -1043,8 +1047,9 @@ func (m Model) handleMessagesPane(key string) (tea.Model, tea.Cmd) {
 	case "h", "left", "tab", "ctrl+h":
 		m.focus = paneList
 		m.clampCursor()
-	case "i", "enter":
-		m.mode = modeInsert
+	case "R", "enter":
+		// the input box, in vim normal mode: i / a start typing
+		m.mode = modeText
 		return m, m.compose.Focus()
 	case "ctrl+v", "p", "P":
 		m.mode = modeInsert
@@ -1082,11 +1087,8 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		if m.editing != nil {
-			m.cancelEdit() // don't leave a half-edit that enter would save later
-		}
-		m.mode = modeNormal
-		m.compose.Blur()
+		// like vim: back to normal mode, still in the box (esc again leaves it)
+		m.mode = modeText
 		return m, nil
 	case "ctrl+v":
 		return m, m.paste()
@@ -1151,7 +1153,7 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.chosen, m.mention = nil, nil
 		m.fitCompose()
 		m.vp.GotoBottom()
-		if len(jids) > 0 && m.mentioner != nil {
+		if (len(jids) > 0 || (isGroup(m.current.JID) && messages.HasMentionAll(text))) && m.mentioner != nil {
 			mn, chat := m.mentioner, m.current.JID
 			return m, m.action("", func(ctx context.Context) (string, error) {
 				return "", mn.SendText(ctx, chat, text, jids)

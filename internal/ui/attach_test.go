@@ -100,7 +100,7 @@ func pasteModel(t *testing.T, clip Clipboard, s Sender) Model {
 	m.img.cellW, m.img.cellH = 8, 16
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	m = next.(Model)
-	m, _ = keys(t, m, "enter", "i")
+	m, _ = keys(t, m, "enter", "R", "i")
 	return m
 }
 
@@ -302,7 +302,7 @@ func TestAttachCommandWithSpacesInPath(t *testing.T) {
 func TestAKeyAttachesInsteadOfInsert(t *testing.T) {
 	t.Setenv("PATH", t.TempDir()) // no yazi: the attach attempt reports it
 	m := pasteModel(t, fakeClip{}, &fakeSender{})
-	m, _ = press(t, m, tea.KeyEsc)
+	m, _ = keys(t, m, "esc", "esc") // out of the box
 	m, cmds := keys(t, m, "a")
 	m = drain(t, m, tea.Batch(cmds...))
 	if m.mode == modeInsert {
@@ -311,8 +311,8 @@ func TestAKeyAttachesInsteadOfInsert(t *testing.T) {
 	if !strings.Contains(m.notice, "yazi not found") {
 		t.Fatalf("a did not try to attach: notice %q", m.notice)
 	}
-	m, _ = keys(t, m, "i")
+	m, _ = keys(t, m, "R", "i")
 	if m.mode != modeInsert {
-		t.Fatal("i should still start insert mode")
+		t.Fatal("R then i should start insert mode")
 	}
 }

@@ -220,7 +220,10 @@ func (sm *SessionManager) storeSent(msg Message, preview string) {
 		sm.uiHandler.UpdateChatList(safeList)
 	}
 	if isCurrent {
-		sm.uiHandler.NewMessage(msg)
+		// names for its @mentions, as a loaded chat has (editing needs them)
+		one := []Message{msg}
+		sm.resolveMentions(one)
+		sm.uiHandler.NewMessage(one[0])
 	}
 }
 

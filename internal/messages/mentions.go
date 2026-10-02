@@ -42,6 +42,7 @@ func (sm *SessionManager) mentionName(ctx context.Context, user string) string {
 
 // resolveMentions fills Message.Mentions with names for "@<number>"s.
 func (sm *SessionManager) resolveMentions(msgs []Message) {
+	markMentionAll(msgs)
 	if sm.getClient() == nil {
 		return
 	}
@@ -72,6 +73,34 @@ type GroupMember struct {
 	Name string
 }
 
+// MentionAll is the member-list entry (JID and name) for "@all": everyone
+// in the group gets a mention.
+const MentionAll = "all"
+
+// mentionAllMax is the largest group where anyone may @all; in bigger ones
+// only admins can (WhatsApp's own rule).
+const mentionAllMax = 32
+
+// mentionAllRe finds "@all" as a word.
+var mentionAllRe = regexp.MustCompile(`(?:^|\s)@all\b`)
+
+// markMentionAll marks "@all" in someone else's group message as a
+// mention of you.
+func markMentionAll(msgs []Message) {
+	for i, m := range msgs {
+		if m.FromMe || !strings.HasSuffix(m.ChatId, "@"+types.GroupServer) || !HasMentionAll(m.Text) {
+			continue
+		}
+		if msgs[i].Mentions == nil {
+			msgs[i].Mentions = map[string]string{}
+		}
+		msgs[i].Mentions[MentionAll] = "You"
+	}
+}
+
+// HasMentionAll reports whether text mentions "@all".
+func HasMentionAll(text string) bool { return mentionAllRe.MatchString(text) }
+
 // GroupMembers lists a group's members (without you) for the mention
 // picker, sorted by name.
 func (sm *SessionManager) GroupMembers(ctx context.Context, chat string) ([]GroupMember, error) {
@@ -89,19 +118,61 @@ func (sm *SessionManager) GroupMembers(ctx context.Context, chat string) ([]Grou
 	}
 	own, _ := sm.ownJID()
 	var out []GroupMember
+	admin := false
 	for _, p := range info.Participants {
 		who := p.JID
 		if !p.PhoneNumber.IsEmpty() {
 			who = p.PhoneNumber
 		}
 		if who.User == own.User || p.JID.User == own.User || (!client.Store.LID.IsEmpty() && p.JID.User == client.Store.LID.User) {
+			admin = p.IsAdmin || p.IsSuperAdmin
 			continue
 		}
 		name := strings.TrimPrefix(sm.contactName(ctx, who), "~ ")
 		out = append(out, GroupMember{JID: p.JID.ToNonAD().String(), Name: name})
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	if len(info.Participants) <= mentionAllMax || admin {
+		out = append([]GroupMember{{JID: MentionAll, Name: MentionAll}}, out...)
+	}
 	return out, nil
+}
+
+// expandMentions turns an "@all" in text (picked or typed) into a mention
+// of every member, since that's what notifies them all; other mentions are
+// kept.
+func (sm *SessionManager) expandMentions(ctx context.Context, chat, text string, mentions []string) []string {
+	out := make([]string, 0, len(mentions))
+	all := false
+	for _, j := range mentions {
+		if j == MentionAll {
+			all = true
+			continue
+		}
+		out = append(out, j)
+	}
+	if !all && !(strings.HasSuffix(chat, "@"+types.GroupServer) && HasMentionAll(text)) {
+		return out
+	}
+	members, err := sm.GroupMembers(ctx, chat)
+	if err != nil {
+		sm.debugf("@all in %s: %v", chat, err)
+		return out
+	}
+	if len(members) == 0 || members[0].JID != MentionAll {
+		return out // not allowed here (a big group, and you aren't an admin)
+	}
+	seen := map[string]bool{}
+	for _, j := range out {
+		seen[j] = true
+	}
+	for _, mem := range members[1:] {
+		if !seen[mem.JID] {
+			seen[mem.JID] = true
+			out = append(out, mem.JID)
+		}
+	}
+	return out
 }
 
 // SendText sends text that @mentions the given JIDs (their numbers must
@@ -111,6 +182,7 @@ func (sm *SessionManager) SendText(ctx context.Context, chat, text string, menti
 	if err != nil {
 		return fmt.Errorf("invalid JID: %w", err)
 	}
+	mentions = sm.expandMentions(ctx, chat, text, mentions)
 	msg := &waE2E.Message{Conversation: proto.String(text)}
 	if len(mentions) > 0 {
 		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
@@ -137,6 +209,12 @@ func (sm *SessionManager) mentionsMe(msg *waE2E.Message) bool {
 		if jid.User == client.Store.ID.User || (!client.Store.LID.IsEmpty() && jid.User == client.Store.LID.User) {
 			return true
 		}
+	}
+	// WhatsApp's own "@all" doesn't list members: it's the text plus a
+	// non-JID mention
+	if contextInfo(msg).GetNonJIDMentions() > 0 {
+		text, _ := extractMessageContent(msg)
+		return HasMentionAll(text)
 	}
 	return false
 }
