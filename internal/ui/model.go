@@ -39,7 +39,6 @@ type mode int
 const (
 	modeNormal mode = iota
 	modeInsert
-	modeText // the input box has focus in vim normal mode (R): i/a type, h/l move
 	modeCommand
 	modeFilter
 	modeVisual       // a message is selected for actions
@@ -58,7 +57,7 @@ type Model struct {
 	focus         pane
 	mode          mode
 	pendingG      bool // first "g" of "gg" was pressed
-	pendingD      bool // first "d" of "dd" in the input box
+	selectAll     bool // ctrl+a: the whole input is selected (typing replaces it)
 	showHelp      bool
 	helpScroll    int
 
@@ -172,7 +171,7 @@ type privacyMsg struct {
 	err         error
 }
 
-const composePlaceholder = "press R, then i to type a message"
+const composePlaceholder = "press i to type a message"
 
 // New creates the UI model. Commands for the backend are sent on commands;
 // initial seeds the chat list with cached conversations.
@@ -734,7 +733,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.search != nil && len(msg) < len(m.msgs) {
 			return m, nil // keep the older messages a search loaded
 		}
-		anchor, delta := m.topVisible() // before m.msgs changes
 		m.msgs = append([]messages.Message(nil), msg...)
 		m.sel = len(m.msgs) - 1
 		for i, x := range m.msgs {
@@ -765,9 +763,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshMessages(true)
 			return m, nil
 		}
-		// older history arrived above: keep the same messages on screen
+		// older history arrived above: refreshMessages keeps the same
+		// messages on screen
 		m.refreshMessages(false)
-		m.restoreTop(anchor, delta)
 		return m, nil
 
 	case newMessageMsg:
@@ -829,6 +827,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if key == "ctrl+c" && m.mode == modeInsert && m.selectAll {
+		text := m.compose.Value()
+		clip := m.clip
+		m.selectAll = false
+		return m, func() tea.Msg { return actionDoneMsg{ok: "Copied", err: clip.WriteText(text)} }
+	}
 	if key == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -852,7 +856,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleGlobalSearch(msg)
 	}
 	// files dragged onto the window arrive as a paste of their paths
-	if msg.Paste && !m.picker && (m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert || m.mode == modeText) {
+	if msg.Paste && !m.picker && (m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) {
 		if paths, ok := droppedFiles(string(msg.Runes)); ok {
 			if m.screen != screenChat || m.current == nil {
 				m.notice, m.noticeErr = "open a chat first, then drop the files on it", true
@@ -865,7 +869,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+x drops the pasted image, else cancels the reply, in any mode
 	// that shows them (not while typing a command or search).
 	if key == "ctrl+x" && (len(m.attachments) > 0 || m.replyTo != nil || m.editing != nil) &&
-		(m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert || m.mode == modeText) && !m.picker {
+		(m.mode == modeNormal || m.mode == modeVisual || m.mode == modeInsert) && !m.picker {
 		switch {
 		case m.editing != nil:
 			m.cancelEdit()
@@ -879,8 +883,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeInsert:
 		return m.handleInsert(msg)
-	case modeText:
-		return m.handleText(msg)
 	case modeCommand:
 		return m.handleCommand(msg)
 	case modeFilter:
@@ -1047,9 +1049,8 @@ func (m Model) handleMessagesPane(key string) (tea.Model, tea.Cmd) {
 	case "h", "left", "tab", "ctrl+h":
 		m.focus = paneList
 		m.clampCursor()
-	case "R", "enter":
-		// the input box, in vim normal mode: i / a start typing
-		m.mode = modeText
+	case "i", "enter":
+		m.mode = modeInsert
 		return m, m.compose.Focus()
 	case "ctrl+v", "p", "P":
 		m.mode = modeInsert
@@ -1085,11 +1086,38 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.resize()
 		return m, nil
 	}
+	if m.selectAll {
+		if next, cmd, done := m.handleSelectAll(msg); done {
+			return next, cmd
+		}
+		m.selectAll = false // a key that keeps the text: just deselect
+	}
 	switch msg.String() {
 	case "esc":
-		// like vim: back to normal mode, still in the box (esc again leaves it)
-		m.mode = modeText
+		if m.editing != nil {
+			m.cancelEdit() // don't leave a half-edit that enter would save later
+		}
+		m.mode = modeNormal
+		m.compose.Blur()
 		return m, nil
+	case "ctrl+a":
+		// select all, like any text box
+		if m.compose.Value() != "" {
+			m.selectAll = true
+		}
+		return m, nil
+	case "ctrl+left", "ctrl+right", "ctrl+h", "ctrl+backspace":
+		// word jumps and delete-word, as in other apps (the box knows them as
+		// alt+b / alt+f / ctrl+w)
+		k := map[string]tea.KeyMsg{
+			"ctrl+left":      {Type: tea.KeyRunes, Runes: []rune{'b'}, Alt: true},
+			"ctrl+right":     {Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true},
+			"ctrl+h":         {Type: tea.KeyCtrlW},
+			"ctrl+backspace": {Type: tea.KeyCtrlW},
+		}[msg.String()]
+		m.compose, _ = m.compose.Update(k)
+		m.fitCompose()
+		return m, m.updateMentions()
 	case "ctrl+v":
 		return m, m.paste()
 	case "ctrl+x":
@@ -1101,8 +1129,6 @@ func (m Model) handleInsert(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cancelReply()
 		}
 		return m, nil
-	case "ctrl+a":
-		return m, m.pickFiles()
 	case "enter":
 		text := strings.TrimSpace(m.compose.Value())
 		if m.current == nil {
@@ -1340,11 +1366,17 @@ func fileExists(p string) bool {
 // firstUnread finds where the last n incoming messages start.
 func firstUnread(msgs []messages.Message, n int) int {
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if !msgs[i].FromMe {
-			n--
-			if n == 0 {
-				return i
+		if msgs[i].FromMe {
+			// you wrote after these: they're read (e.g. you replied from
+			// your phone); unread starts after your message, if anything does
+			if i+1 < len(msgs) {
+				return i + 1
 			}
+			return -1
+		}
+		n--
+		if n == 0 {
+			return i
 		}
 	}
 	return -1 // more unread than loaded: no telling where they start
@@ -1355,8 +1387,8 @@ func firstUnread(msgs []messages.Message, n int) int {
 func (m Model) topVisible() (id string, delta int) {
 	y := m.vp.YOffset
 	for _, sp := range m.msgSpans {
-		if sp.idx < len(m.msgs) && sp.start <= y {
-			id, delta = m.msgs[sp.idx].Id, y-sp.start
+		if sp.start <= y {
+			id, delta = sp.id, y-sp.start
 		}
 	}
 	return id, delta
@@ -1364,19 +1396,23 @@ func (m Model) topVisible() (id string, delta int) {
 
 // restoreTop scrolls back to the message topVisible returned.
 func (m *Model) restoreTop(id string, delta int) {
+	if id == "" {
+		return
+	}
 	for _, sp := range m.msgSpans {
-		if sp.idx < len(m.msgs) && m.msgs[sp.idx].Id == id {
+		if sp.id == id {
 			m.vp.SetYOffset(sp.start + delta)
 			return
 		}
 	}
 }
 
-// scrollToUnread puts the unread divider at the top of the view.
+// scrollToUnread puts the unread divider in the middle of the view: the
+// unread messages below it, some of what came before above.
 func (m *Model) scrollToUnread() {
 	for _, sp := range m.msgSpans {
-		if m.msgs[sp.idx].Id == m.unreadID {
-			m.vp.SetYOffset(max(sp.start-2, 0))
+		if sp.id == m.unreadID {
+			m.vp.SetYOffset(max(sp.start-m.vp.Height/2, 0))
 			return
 		}
 	}

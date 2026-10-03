@@ -66,6 +66,9 @@ func (sm *SessionManager) Init(handler UiMessageHandler) error {
 	sm.avatarSem = make(chan struct{}, 2)
 
 	// Load conversations from SQLite into PriorityQueue
+	if err := sm.db.CapUnreadAfterReplies(); err != nil {
+		sm.debugf("fix unread counts: %v", err)
+	}
 	convs, err := sm.db.GetConversations()
 	if err == nil {
 		for _, c := range convs {

@@ -35,7 +35,8 @@ chats and recent history load in the background.
 
 The chat list opens first. `enter` (or `l`) opens a chat; the list moves to
 the left as a sidebar and `backspace` (or `q`) goes back. A chat with unread
-messages opens at the first unread one, below a "N unread messages" line;
+messages opens with the "N unread messages" line in the middle of the screen
+(the unread ones below it);
 otherwise (or when the phone reports more unread than have loaded) at the
 newest message. Older history loading in doesn't move what you're reading.
 
@@ -61,11 +62,11 @@ the wheel.
 
 ## Writing
 
-`R` (or `enter`) puts you in the input box, vim-style: `i` types at the
-cursor, `a` after it, `I` / `A` at the start / end of the line, `o` on a new
-line. `esc` goes back to the box's normal mode (TEXT), where `h` `l` `w` `b`
-`0` `$` move, `x` / `D` / `dd` delete and `enter` sends; `esc` again leaves
-the box. `ctrl+a` attaches files in either mode.
+`i` (or `enter`) starts typing, `enter` sends, `esc` goes back to normal mode.
+The input box works like other text boxes: `ctrl+a` selects everything (then
+typing replaces it, `backspace` deletes it, `ctrl+c` copies and `ctrl+x` cuts
+it), `ctrl+←` / `ctrl+→` jump a word, `ctrl+backspace` deletes one, `home` /
+`end` go to the line's start / end. Attach files with `a` in normal mode.
 
 - **New line:** `shift+enter` in kitty (see [kitty setup](#kitty-setup)), or
   `alt+enter` / `ctrl+j` anywhere.
@@ -130,7 +131,7 @@ selected.
 
 - **Paste a screenshot:** `ctrl+v` while typing (or `p` in a chat). It waits
   above the input box; type a caption and `enter`.
-- **Attach files:** `a` in a chat (or `ctrl+a` while typing) opens
+- **Attach files:** `a` in a chat (in normal mode) opens
   [yazi](https://yazi-rs.github.io): `space` picks several files, `enter`
   attaches them. Images are sent as photos, the rest as documents. Without
   yazi: `:attach ~/file.pdf`.
@@ -193,6 +194,7 @@ paint_background = false       ; true paints the theme background
 images           = auto        ; auto, kitty, blocks, off
 avatars          = true
 mouse            = true
+highlight_opacity = 0.8        ; kitty: see-through highlights, bubbles and status bar (1 = solid)
 chat_sidebar_width = 38
 qr_compact       = false       ; smaller login QR code
 ```

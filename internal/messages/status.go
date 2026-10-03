@@ -45,6 +45,12 @@ func statusFromHistory(s waWeb.WebMessageInfo_Status) int {
 // handleReceipt moves your messages forward when they are delivered, read
 // or played. In groups the first receipt counts (like "read by someone").
 func (sm *SessionManager) handleReceipt(evt *events.Receipt) {
+	// you read the chat on your phone (or another device): it's read here too
+	if evt.IsFromMe && (evt.Type == types.ReceiptTypeRead || evt.Type == types.ReceiptTypeReadSelf) {
+		sm.debugf("read on another device: %s", evt.Chat)
+		sm.setChatRead(evt.Chat, true)
+		return
+	}
 	var st int
 	switch evt.Type {
 	case types.ReceiptTypeDelivered:

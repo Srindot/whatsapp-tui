@@ -522,6 +522,53 @@ func (md *MessageDatabase) EditMessage(id, text string) (bool, error) {
 	return n > 0, err
 }
 
+// CapUnreadAfterReplies fixes unread counts that include messages you had
+// already answered: replying (from any device) means you read the chat, so a
+// chat can't have more unread than the messages others sent after your last
+// one. Chats with no message from you are left alone.
+func (md *MessageDatabase) CapUnreadAfterReplies() error {
+	if md.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	_, err := md.db.Exec(`
+	UPDATE conversations SET
+		unread = MIN(unread, (
+			SELECT COUNT(*) FROM messages m
+			WHERE m.chat_id = conversations.jid AND m.from_me = 0
+			  AND m.timestamp > (SELECT MAX(timestamp) FROM messages
+			                     WHERE chat_id = conversations.jid AND from_me = 1)))
+	WHERE unread > 0
+	  AND EXISTS (SELECT 1 FROM messages WHERE chat_id = conversations.jid AND from_me = 1)`)
+	if err != nil {
+		return err
+	}
+	_, err = md.db.Exec(`UPDATE conversations SET mentioned = 0 WHERE unread = 0 AND mentioned = 1`)
+	return err
+}
+
+// UnreadCounts returns each chat's unread count and mention flag.
+func (md *MessageDatabase) UnreadCounts() (map[string]uint16, map[string]bool, error) {
+	if md.db == nil {
+		return nil, nil, fmt.Errorf("database not initialized")
+	}
+	rows, err := md.db.Query(`SELECT jid, unread, COALESCE(mentioned, 0) FROM conversations`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	unread, mentioned := map[string]uint16{}, map[string]bool{}
+	for rows.Next() {
+		var jid string
+		var n uint16
+		var m bool
+		if err := rows.Scan(&jid, &n, &m); err != nil {
+			return nil, nil, err
+		}
+		unread[jid], mentioned[jid] = n, m
+	}
+	return unread, mentioned, rows.Err()
+}
+
 // MarkRevoked replaces a message deleted for everyone with a note.
 func (md *MessageDatabase) MarkRevoked(id, note string) error {
 	if md.db == nil {

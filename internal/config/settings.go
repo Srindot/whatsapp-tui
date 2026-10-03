@@ -60,6 +60,9 @@ type Ui struct {
 	Images           string // auto, kitty, blocks or off
 	Avatars          bool   // show profile pictures (kitty only)
 	Mouse            bool   // click a chat to open it, wheel to scroll
+	// HighlightOpacity: how solid highlights, bubbles and the status bar are
+	// over a see-through terminal (0..1; 1 = solid). kitty only.
+	HighlightOpacity float64
 }
 
 type Colors struct {
@@ -117,6 +120,7 @@ var Config = IniFile{
 		Images:           "auto",
 		Avatars:          true,
 		Mouse:            true,
+		HighlightOpacity: 0.8,
 	},
 	&Colors{
 		Background:      "black",

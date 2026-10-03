@@ -240,7 +240,11 @@ func (eh *eventHandler) processIncomingMessage(evt *events.Message, text, previe
 	if conv != nil {
 		conv.LastMsgTime = int64(timestamp)
 		conv.Preview = preview
-		if !evt.Info.IsFromMe {
+		if evt.Info.IsFromMe {
+			// writing in a chat (e.g. from your phone) means you've read it,
+			// as on the phone
+			conv.Unread, conv.Mentioned = 0, false
+		} else {
 			conv.Unread++
 		}
 		conv.Mentioned = conv.Mentioned || mentionsMe

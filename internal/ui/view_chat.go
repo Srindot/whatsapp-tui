@@ -14,8 +14,9 @@ import (
 
 // msgSpan records which content lines a message occupies in the viewport.
 type msgSpan struct {
-	idx        int // index into Model.msgs
-	start, end int // first and last line (inclusive)
+	idx        int    // index into Model.msgs
+	id         string // that message's id when drawn (msgs can change since)
+	start, end int    // first and last line (inclusive)
 }
 
 // Size limits for inline media, in cells.
@@ -144,16 +145,17 @@ func (m Model) renderChatPane(width, height int) string {
 // its middle line.
 func (m Model) renderCompose(width int) string {
 	border := pal.Muted
-	if m.mode == modeText {
-		border = pal.Rose // focused, not typing
-	}
 	if m.mode == modeInsert {
 		border = colorWarm
+	}
+	view := m.compose.View()
+	if m.selectAll {
+		view = m.renderSelectedCompose()
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).BorderForeground(border).
 		Padding(0, 1).Width(width - 2).
-		Render(m.compose.View())
+		Render(view)
 }
 
 func (m Model) renderMessages(width int) (string, []msgSpan) {
@@ -162,7 +164,7 @@ func (m Model) renderMessages(width int) (string, []msgSpan) {
 	}
 	if len(m.msgs) == 0 {
 		return "\n" + styleDim.PaddingLeft(2).Width(width).Render(
-			"No messages yet. Fetching recent history from your phone… (press R, then i to write one)"), nil
+			"No messages yet. Fetching recent history from your phone… (press i to write one)"), nil
 	}
 	group := isGroup(m.current.JID)
 	now := time.Now()
@@ -207,7 +209,7 @@ func (m Model) renderMessages(width int) (string, []msgSpan) {
 		start := lines
 		selected := m.mode == modeVisual && i == m.sel
 		add(m.renderBubble(msg, group && sender != lastSender, selected, maxInner, width, t))
-		spans = append(spans, msgSpan{idx: i, start: start, end: lines - 1})
+		spans = append(spans, msgSpan{idx: i, id: msg.Id, start: start, end: lines - 1})
 		lastSender = sender
 	}
 	add("")

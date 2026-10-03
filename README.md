@@ -60,7 +60,7 @@ characters outside kitty). Native Windows is untested.
 ## Use
 
 The full guide is in [USAGE.md](USAGE.md); press `?` in the app for every key. The basics: `j`/`k` move, `enter` opens a
-chat, `R` then `i` writes (vim-style input box), `esc` goes back, `v` selects messages
+chat, `i` writes, `esc` goes back to normal mode, `v` selects messages
 (`enter` reply, `r` react, `e` edit, `f` forward, `y` copy, `s` save, `d` delete), `/` searches,
 `S` searches all chats, `:q` quits.
 

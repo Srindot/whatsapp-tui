@@ -108,6 +108,12 @@ func run() error {
 	if termimg.Detect("auto") == termimg.ModeKitty {
 		fmt.Fprint(os.Stdout, "\x1b]1337;SetUserVar=whatsapp_tui=MQ==\x07")
 		defer fmt.Fprint(os.Stdout, "\x1b]1337;SetUserVar=whatsapp_tui\x07")
+		// see-through highlights over a see-through window
+		if !config.Config.Ui.PaintBackground {
+			on, off := ui.KittyTransparency(config.Config.Ui.Theme, config.Config.Ui.HighlightOpacity)
+			fmt.Fprint(os.Stdout, on)
+			defer fmt.Fprint(os.Stdout, off)
+		}
 	}
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("ui: %w", err)

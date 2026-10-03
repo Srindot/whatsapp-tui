@@ -105,6 +105,26 @@ func (sm *SessionManager) sendRead(jidStr string, unread int) error {
 	return errors.Join(errs...)
 }
 
+// capUnread applies CapUnreadAfterReplies and updates the chat list's counts.
+func (sm *SessionManager) capUnread() {
+	if err := sm.db.CapUnreadAfterReplies(); err != nil {
+		sm.debugf("fix unread counts: %v", err)
+		return
+	}
+	unread, mentioned, err := sm.db.UnreadCounts()
+	if err != nil {
+		sm.debugf("read unread counts: %v", err)
+		return
+	}
+	sm.mu.Lock()
+	for jid, conv := range sm.convByJID {
+		if n, ok := unread[jid]; ok && n < conv.Unread {
+			conv.Unread, conv.Mentioned = n, mentioned[jid]
+		}
+	}
+	sm.mu.Unlock()
+}
+
 // snapshotPQ returns a deep copy of the priority queue. Caller must hold sm.mu.
 func (sm *SessionManager) snapshotPQ() []*Conversation {
 	safeList := make([]*Conversation, len(sm.priorityQueue))

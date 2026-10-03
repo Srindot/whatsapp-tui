@@ -91,9 +91,28 @@ func TestOpenChatAtFirstUnread(t *testing.T) {
 }
 
 func TestMoreUnreadThanLoaded(t *testing.T) {
-	// the phone's count covers messages not loaded here, so there's no
-	// telling where they start: open at the newest instead of the oldest
+	// a count bigger than what's loaded: your last reply (m25) marks where
+	// the unread ones start, not the count
 	m, _ := unreadModel(t, 443)
+	if m.unreadID != "m26" {
+		t.Fatalf("unreadID %q, want m26 (after your reply)", m.unreadID)
+	}
+
+	// no reply of yours loaded either: no telling where they start, so open
+	// at the newest
+	jid := "u@s.whatsapp.net"
+	var msgs []messages.Message
+	for i := 0; i < 40; i++ {
+		msgs = append(msgs, messages.Message{Id: fmt.Sprint("n", i), ChatId: jid, ContactId: jid,
+			Timestamp: uint64(1700000000 + i*60), Text: fmt.Sprint("message ", i)})
+	}
+	m = New(make(chan messages.Command, 10), []*messages.Conversation{{JID: jid, Name: "Mom", LastMsgTime: 9, Unread: 443}},
+		Options{SidebarWidth: 38, Images: termimg.ModeOff})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = next.(Model)
+	m, _ = keys(t, m, "enter")
+	next, _ = m.Update(screenMsg(msgs))
+	m = next.(Model)
 	if m.unreadID != "" || !m.vp.AtBottom() || strings.Contains(stripANSI(m.View()), "unread messages") {
 		t.Fatalf("unreadID %q, at bottom %v", m.unreadID, m.vp.AtBottom())
 	}
@@ -142,5 +161,52 @@ func TestMentionsOfYouStandOut(t *testing.T) {
 	m, _ = keys(t, m, "@")
 	if m.msgs[m.sel].Id != "c" {
 		t.Fatal("@ should wrap to the newest mention")
+	}
+}
+
+// Messages you answered (e.g. from your phone) aren't unread, whatever the
+// count says: the line goes after your last message.
+func TestUnreadLineNotAboveYourReply(t *testing.T) {
+	msgs := []messages.Message{
+		{Id: "a"}, {Id: "b"}, {Id: "mine", FromMe: true}, {Id: "c"},
+	}
+	if i := firstUnread(msgs, 7); i != 3 {
+		t.Fatalf("firstUnread = %d, want 3 (after your reply)", i)
+	}
+	if i := firstUnread(msgs[:3], 2); i != -1 {
+		t.Fatalf("your message is the newest: firstUnread = %d, want -1", i)
+	}
+	if i := firstUnread([]messages.Message{{Id: "x"}, {Id: "y"}}, 1); i != 1 {
+		t.Fatalf("plain count: firstUnread = %d", i)
+	}
+}
+
+// The unread line opens around the middle of the screen (what came before
+// above it, the unread messages below), and stays there while the chat
+// redraws, e.g. when pictures above it load and get taller.
+func TestUnreadLineMiddleAndStays(t *testing.T) {
+	m, msgs := unreadModel(t, 12)
+	line := -1
+	for i, l := range strings.Split(stripANSI(m.vp.View()), "\n") {
+		if strings.Contains(l, "12 unread messages") {
+			line = i
+		}
+	}
+	h := m.vp.Height
+	if line < h/3 || line > 2*h/3 {
+		t.Fatalf("unread line at row %d of %d, want around the middle", line, h)
+	}
+
+	// something above gets taller (a picture loading): the view keeps its place
+	top, _ := m.topVisible()
+	grown := append([]messages.Message(nil), msgs...)
+	grown[1].Text = strings.Repeat("a long caption that wraps onto many lines ", 20)
+	m.msgs = grown
+	m.refreshMessages(false)
+	if now, _ := m.topVisible(); now != top {
+		t.Fatalf("top message moved from %s to %s", top, now)
+	}
+	if !strings.Contains(stripANSI(m.vp.View()), "12 unread messages") {
+		t.Fatal("the unread line was pushed off the screen")
 	}
 }

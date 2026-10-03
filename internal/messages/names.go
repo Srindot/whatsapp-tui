@@ -2,6 +2,8 @@ package messages
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -93,6 +95,25 @@ func (sm *SessionManager) contactName(ctx context.Context, jid types.JID) string
 	return formatPhone(jid.User)
 }
 
+// fetchAppState does a full sync of an app state collection. If the local
+// copy is corrupted ("mismatching LTHash", which stops all its updates:
+// archive, pin, read on the phone) it's dropped and fetched fresh.
+func (sm *SessionManager) fetchAppState(ctx context.Context, name appstate.WAPatchName) error {
+	client := sm.getClient()
+	if client == nil {
+		return errors.New("not connected")
+	}
+	err := client.FetchAppState(ctx, name, true, false)
+	if err == nil || !errors.Is(err, appstate.ErrMismatchingLTHash) {
+		return err
+	}
+	sm.debugf("app state %s is corrupted (%v); fetching it fresh", name, err)
+	if derr := client.Store.AppState.DeleteAppStateVersion(ctx, string(name)); derr != nil {
+		return fmt.Errorf("reset %s: %w", name, derr)
+	}
+	return client.FetchAppState(ctx, name, true, false)
+}
+
 // refreshNames re-resolves the names of all one-to-one chats (and groups
 // without a name) and pushes the updated list to the UI.
 func (sm *SessionManager) refreshNames(ctx context.Context) {
@@ -173,12 +194,13 @@ func (sm *SessionManager) syncContacts() {
 	}
 	// Archived and pinned chats live in regular_low, which may never have
 	// synced either; a full sync replays them as Archive/Pin events.
-	if err := client.FetchAppState(ctx, appstate.WAPatchRegularLow, true, false); err != nil {
-		sm.debugf("archive/pin sync failed: %v", err)
+	// regular_low also carries "chat read on the phone"
+	if err := sm.fetchAppState(ctx, appstate.WAPatchRegularLow); err != nil {
+		sm.debugf("archive/pin/read sync failed: %v", err)
 	} else {
-		sm.debugf("archive/pin sync done")
+		sm.debugf("archive/pin/read sync done")
 	}
-	if err := client.FetchAppState(ctx, appstate.WAPatchCriticalUnblockLow, true, false); err != nil {
+	if err := sm.fetchAppState(ctx, appstate.WAPatchCriticalUnblockLow); err != nil {
 		sm.debugf("contact sync failed: %v", err)
 		sm.mu.Lock()
 		sm.contactsSynced = false // retry on the next connect

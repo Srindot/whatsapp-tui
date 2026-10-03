@@ -370,6 +370,9 @@ func (sm *SessionManager) processHistorySync(data *waHistorySync.HistorySync) {
 		}
 	}
 
+	// no unread counts for chats you've since replied in
+	sm.capUnread()
+
 	// Refresh chat list UI
 	sm.mu.Lock()
 	safeList := sm.snapshotPQ()

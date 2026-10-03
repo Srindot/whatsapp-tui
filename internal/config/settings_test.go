@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/ini.v1"
 )
 
 func TestDefaults_CmdPrefix(t *testing.T) {
@@ -105,5 +107,23 @@ func TestSetDownloadPathPersists(t *testing.T) {
 	}
 	if Config.General.DownloadPath != "/new/place" {
 		t.Fatalf("in-memory path = %q", Config.General.DownloadPath)
+	}
+}
+
+func TestHighlightOpacitySetting(t *testing.T) {
+	if Config.Ui.HighlightOpacity != 0.8 {
+		t.Fatalf("default highlight_opacity = %v", Config.Ui.HighlightOpacity)
+	}
+	cfg, err := ini.Load([]byte("[ui]\nhighlight_opacity = 0.35\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.NameMapper = ini.TitleUnderscore
+	ui := Config.Ui
+	if err := cfg.Section("ui").MapTo(&ui); err != nil {
+		t.Fatal(err)
+	}
+	if ui.HighlightOpacity != 0.35 {
+		t.Fatalf("highlight_opacity read as %v", ui.HighlightOpacity)
 	}
 }

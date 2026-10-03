@@ -56,12 +56,18 @@ func (m *Model) resize() {
 
 // refreshMessages re-renders the message list into the viewport.
 func (m *Model) refreshMessages(gotoBottom bool) {
+	// keep the message at the top of the screen in place: pictures loading,
+	// reactions or history arriving above would otherwise shift what you're
+	// reading (and the unread line) down the screen
+	anchor, delta := m.topVisible()
 	content, spans := m.renderMessages(m.rightWidth())
 	m.vp.SetContent(content)
 	m.msgSpans = spans
 	m.msgLines = strings.Split(content, "\n")
 	if gotoBottom {
 		m.vp.GotoBottom()
+	} else {
+		m.restoreTop(anchor, delta)
 	}
 }
 
@@ -194,8 +200,6 @@ func (m Model) modeBadge() string {
 	switch m.mode {
 	case modeInsert:
 		badge = styleModeInsert.Render("INSERT")
-	case modeText:
-		badge = styleModeNormal.Render("TEXT")
 	case modeCommand:
 		badge = styleModeCmd.Render("COMMAND")
 	case modeFilter:
@@ -262,8 +266,6 @@ func (m Model) renderCommandLine() string {
 		return m.renderPicker()
 	case m.mode == modeVisual && m.notice == "":
 		return styleDim.Render(ansi.Truncate(visualHint, m.width, "…"))
-	case m.mode == modeText && m.notice == "":
-		return styleDim.Render(ansi.Truncate(textHint, m.width, "…"))
 	case m.notice != "" && m.noticeErr:
 		return styleErr.Render(ansi.Truncate(m.notice, m.width, "…"))
 	case m.notice != "":
